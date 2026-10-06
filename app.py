@@ -197,18 +197,23 @@ def init_session_state() -> None:
 
 def render_scraper_tab() -> None:
     """Merender tab formulir input dan monitor real-time scraping publikasi."""
+    job: Optional[ScrapingJob] = st.session_state.job
+    # Job dianggap aktif hanya jika thread berjalan dan tidak sedang diminta berhenti
+    is_running = bool(job and job.is_running and not job.stop_requested)
+
     # Form Input
     with st.container():
         input_author = st.text_input(
             "ID Author atau URL Google Scholar",
             value="K_X8HzoAAAAJ",
             placeholder="Contoh: K_X8HzoAAAAJ atau link profil",
-            help="Masukkan ID author atau URL profil lengkap Google Scholar."
+            help="Masukkan ID author atau URL profil lengkap Google Scholar.",
+            disabled=is_running
         )
 
         col_y1, col_y2, col_lim = st.columns(3)
         with col_y1:
-            start_year = st.number_input("Tahun Mulai", min_value=1990, max_value=2030, value=2023, step=1)
+            start_year = st.number_input("Tahun Mulai", min_value=1990, max_value=2030, value=2023, step=1, disabled=is_running)
             speed_option = st.selectbox(
                 "Kecepatan Scraping",
                 options=[
@@ -216,10 +221,11 @@ def render_scraper_tab() -> None:
                     "Standar (1.5 - 2.5 detik)",
                     "Cepat (0.8 - 1.5 detik)"
                 ],
-                index=0
+                index=0,
+                disabled=is_running
             )
         with col_y2:
-            end_year = st.number_input("Tahun Akhir", min_value=1990, max_value=2030, value=2026, step=1)
+            end_year = st.number_input("Tahun Akhir", min_value=1990, max_value=2030, value=2026, step=1, disabled=is_running)
         with col_lim:
             max_pubs = st.number_input(
                 "Batas Artikel (0 = Semua)",
@@ -227,7 +233,8 @@ def render_scraper_tab() -> None:
                 max_value=5000,
                 value=0,
                 step=5,
-                help="Isi angka (misal 5 atau 10) untuk pengujian cepat."
+                help="Isi angka (misal 5 atau 10) untuk pengujian cepat.",
+                disabled=is_running
             )
 
         if speed_option.startswith("Santai"):
@@ -236,10 +243,6 @@ def render_scraper_tab() -> None:
             min_delay, max_delay = 1.5, 2.5
         else:
             min_delay, max_delay = 0.8, 1.5
-
-    job: Optional[ScrapingJob] = st.session_state.job
-    # Job dianggap aktif hanya jika thread berjalan dan tidak sedang diminta berhenti
-    is_running = bool(job and job.is_running and not job.stop_requested)
 
     # Tombol Aksi Tunggal (Mulai / Berhenti)
     if not is_running:
