@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panduan Penggunaan - Google Scholar Scraper</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-page: #f8fafc;
+            --bg-card: #ffffff;
+            --bg-subtle: #f0fdf4;
+            --primary: #059669;
+            --primary-hover: #047857;
+            --primary-dark: #065f46;
+            --primary-light: #d1fae5;
+            --text-heading: #0f172a;
+            --text-body: #334155;
+            --text-muted: #64748b;
+            --border-color: #e2e8f0;
+            --border-highlight: #a7f3d0;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--font-family);
+            background-color: var(--bg-page);
+            color: var(--text-body);
+            line-height: 1.65;
+            font-size: 15px;
+            padding-bottom: 60px;
+        }
+
+        /* Navigasi Atas */
+        header {
+            background-color: var(--bg-card);
+            border-bottom: 1px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            padding: 14px 24px;
+        }
+
+        .header-inner {
+            max-width: 860px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .brand-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--primary-dark);
+            letter-spacing: -0.01em;
+        }
+
+        .btn-print {
+            background-color: #ffffff;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            padding: 6px 14px;
+            border-radius: var(--radius-md);
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-print:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+            background-color: var(--bg-subtle);
+        }
+
+        /* Kontainer Utama */
+        .container {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 32px 20px 0;
+        }
+
+        /* Hero */
+        .hero {
+            text-align: center;
+            margin-bottom: 36px;
+        }
+
+        .hero h1 {
+            font-size: 2.1rem;
+            font-weight: 800;
+            color: var(--text-heading);
+            letter-spacing: -0.02em;
+            margin-bottom: 8px;
+        }
+
+        .hero p {
+            font-size: 1rem;
+            color: var(--text-muted);
+            max-width: 580px;
+            margin: 0 auto;
+        }
+
+        /* Kotak Kartu */
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 28px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 18px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .step-number {
+            width: 34px;
+            height: 34px;
+            background-color: var(--bg-subtle);
+            color: var(--primary-dark);
+            border: 1px solid var(--border-highlight);
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text-heading);
+            letter-spacing: -0.01em;
+        }
+
+        /* Daftar Langkah */
+        .step-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .step-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .step-bullet {
+            width: 6px;
+            height: 6px;
+            background-color: var(--primary);
+            border-radius: 50%;
+            margin-top: 8px;
+            flex-shrink: 0;
+        }
+
+        .step-text {
+            flex: 1;
+        }
+
+        .step-text strong {
+            color: var(--text-heading);
+            font-weight: 600;
+        }
+
+        /* Kotak Info Hijau Bersih */
+        .info-box {
+            background-color: var(--bg-subtle);
+            border: 1px solid var(--border-highlight);
+            border-radius: var(--radius-md);
+            padding: 14px 18px;
+            margin-top: 16px;
+            color: var(--primary-dark);
+            font-size: 0.92rem;
+            line-height: 1.55;
+        }
+
+        .info-box strong {
+            color: var(--primary-dark);
+        }
+
+        /* Kotak URL */
+        .url-box {
+            background-color: #f1f5f9;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 10px 14px;
+            font-family: monospace;
+            font-size: 0.88rem;
+            color: #1e293b;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+
+        .url-highlight {
+            background-color: #d1fae5;
+            color: #065f46;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 700;
+        }
+
+        /* Grid Kolom Peluncur */
+        .launcher-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            margin-top: 12px;
+        }
+
+        .launcher-card {
+            background-color: #ffffff;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 16px;
+        }
+
+        .launcher-tag {
+            display: inline-block;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--primary);
+            margin-bottom: 6px;
+        }
+
+        .launcher-file {
+            font-weight: 700;
+            color: var(--text-heading);
+            font-size: 0.95rem;
+            margin-bottom: 4px;
+        }
+
+        .launcher-desc {
+            font-size: 0.84rem;
+            color: var(--text-muted);
+        }
+
+        /* Accordion FAQ */
+        .faq-item {
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            margin-bottom: 10px;
+            background-color: #ffffff;
+            overflow: hidden;
+        }
+
+        .faq-question {
+            padding: 14px 18px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: var(--text-heading);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+
+        .faq-question:hover {
+            background-color: #fafafa;
+        }
+
+        .faq-icon {
+            font-size: 1.1rem;
+            color: var(--text-muted);
+            transition: transform 0.2s ease;
+        }
+
+        .faq-answer {
+            padding: 0 18px 16px;
+            font-size: 0.9rem;
+            color: var(--text-body);
+            line-height: 1.6;
+            display: none;
+            border-top: 1px solid var(--border-color);
+            padding-top: 12px;
+        }
+
+        .faq-item.open .faq-answer {
+            display: block;
+        }
+
+        .faq-item.open .faq-icon {
+            transform: rotate(45deg);
+        }
+
+        /* Responsif & Cetak */
+        @media (max-width: 640px) {
+            .launcher-grid {
+                grid-template-columns: 1fr;
+            }
+            .hero h1 {
+                font-size: 1.7rem;
+            }
+            .card {
+                padding: 20px;
+            }
+        }
+
+        @media print {
+            header, .btn-print {
+                display: none;
+            }
+            body {
+                background: #ffffff;
+            }
+            .card {
+                box-shadow: none;
+                border: 1px solid #ccc;
+            }
+            .faq-answer {
+                display: block !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-inner">
+            <div class="brand-title">Google Scholar Scraper</div>
+            <button class="btn-print" onclick="window.print()">Cetak / Simpan PDF</button>
+        </div>
+    </header>
+
+    <div class="container">
+
+        <div class="hero">
+            <h1>Panduan Penggunaan</h1>
+            <p>Petunjuk praktis menjalankan aplikasi dan mengunduh data publikasi dosen ke Microsoft Excel.</p>
+        </div>
+
+        <!-- LANGKAH 1 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="step-number">1</div>
+                <div class="card-title">Membuka Aplikasi</div>
+            </div>
+
+            <p style="margin-bottom: 12px;">Buka folder aplikasi di komputer Anda, lalu klik dua kali (double-click) berkas peluncur yang sesuai:</p>
+
+            <div class="launcher-grid">
+                <div class="launcher-card">
+                    <span class="launcher-tag">Pengguna Mac</span>
+                    <div class="launcher-file">run_mac.command</div>
+                    <div class="launcher-desc">Klik 2x berkas ini. Browser akan otomatis terbuka.</div>
+                </div>
+                <div class="launcher-card">
+                    <span class="launcher-tag">Pengguna Windows</span>
+                    <div class="launcher-file">run_windows.bat</div>
+                    <div class="launcher-desc">Klik 2x berkas ini. Browser akan otomatis terbuka.</div>
+                </div>
+            </div>
+
+            <div class="info-box">
+                Aplikasi web akan otomatis terbuka di browser pada alamat <strong>http://localhost:8501</strong>. Semua kebutuhan program akan disiapkan secara otomatis tanpa perlu instalasi manual.
+            </div>
+        </div>
+
+        <!-- LANGKAH 2 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="step-number">2</div>
+                <div class="card-title">Mengisi Parameter & Memulai</div>
+            </div>
+
+            <ul class="step-list">
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        <strong>ID Author atau Link Profil:</strong> Buka profil Google Scholar dosen target, lalu salin alamat URL atau kode ID author-nya:
+                        <div class="url-box">
+                            https://scholar.google.com/citations?user=<span class="url-highlight">K_X8HzoAAAAJ</span>&hl=en
+                        </div>
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        <strong>Tahun Mulai & Tahun Akhir:</strong> Tentukan periode waktu sitasi dan artikel yang ingin direkap (misal: <code>2023</code> hingga <code>2026</code>).
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        <strong>Kecepatan Scraping:</strong> Gunakan pilihan <em>Santai / Aman</em> untuk stabilitas pengambilan data yang optimal.
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        <strong>Batas Artikel (Opsional):</strong> Biarkan <code>0</code> untuk mengambil semua artikel, atau isi angka (misal: <code>5</code>) jika hanya ingin pengujian singkat.
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        <strong>Klik Tombol Mulai:</strong> Tekan tombol hijau <strong>Mulai</strong>. Jendela Google Chrome akan terbuka dan proses ekstraksi langsung berjalan.
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+        <!-- LANGKAH 3 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="step-number">3</div>
+                <div class="card-title">Jika Muncul Verifikasi Robot (CAPTCHA)</div>
+            </div>
+
+            <p style="margin-bottom: 12px;">Google terkadang menampilkan verifikasi robot untuk memastikan keamanan akses:</p>
+
+            <ul class="step-list">
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        Jika di dashboard muncul kotak peringatan kuning, buka jendela <strong>Google Chrome</strong> yang sedang berjalan di komputer Anda.
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        Centang kotak <em>"I am not a robot"</em> atau selesaikan verifikasi gambar di Chrome.
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        Setelah selesai, sistem akan <strong>otomatis melanjutkan proses scraping</strong> tanpa perlu menekan tombol apa pun.
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+        <!-- LANGKAH 4 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="step-number">4</div>
+                <div class="card-title">Membuka Hasil & Analisis</div>
+            </div>
+
+            <ul class="step-list">
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        <strong>Berkas Excel Otomatis Tersimpan:</strong> Seluruh data disimpan rapi di dalam folder <code>hasil_scraping/</code> dengan format <code>.xlsx</code> (Microsoft Excel).
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        <strong>Tombol Buka Hasil:</strong> Klik tombol hijau <strong>Buka Hasil</strong> untuk langsung membuka folder penyimpanan di komputer Anda.
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        <strong>Tab Analisis:</strong> Buka tab <strong>Analisis</strong> di bagian atas untuk melihat grafik peran penulis, sebaran jurnal nasional/internasional, dan tren sitasi tahunan.
+                    </div>
+                </li>
+                <li class="step-item">
+                    <div class="step-bullet"></div>
+                    <div class="step-text">
+                        <strong>Tab Riwayat Berkas:</strong> Buka tab <strong>Riwayat Berkas</strong> untuk melihat daftar seluruh berkas Excel yang pernah dibuat sebelumnya.
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+        <!-- PERTANYAAN UMUM -->
+        <div class="card">
+            <div class="card-header">
+                <div class="step-number">?</div>
+                <div class="card-title">Pertanyaan yang Sering Diajukan</div>
+            </div>
+
+            <div class="faq-item">
+                <div class="faq-question" onclick="toggleFaq(this)">
+                    <span>Apakah proses bisa dilanjutkan jika sempat terhenti?</span>
+                    <span class="faq-icon">+</span>
+                </div>
+                <div class="faq-answer">
+                    Bisa. Aplikasi memiliki fitur simpan otomatis (checkpoint). Jika Anda menjalankan ulang dengan ID author dan rentang tahun yang sama, artikel yang sudah tersimpan akan otomatis dilewati.
+                </div>
+            </div>
+
+            <div class="faq-item">
+                <div class="faq-question" onclick="toggleFaq(this)">
+                    <span>Bagaimana cara memperbarui data peringkat Scopus?</span>
+                    <span class="faq-icon">+</span>
+                </div>
+                <div class="faq-answer">
+                    Cukup masukkan berkas SCImagoJR terbaru (misalnya <code>scimagojr 2026.csv</code>) ke dalam folder <code>data/</code>. Sistem akan otomatis mendeteksi dan menggunakan berkas tahun terbaru sebagai acuan kuartil Scopus.
+                </div>
+            </div>
+
+            <div class="faq-item">
+                <div class="faq-question" onclick="toggleFaq(this)">
+                    <span>Bagaimana cara menutup aplikasi setelah selesai?</span>
+                    <span class="faq-icon">+</span>
+                </div>
+                <div class="faq-answer">
+                    Tutup tab browser Anda, lalu pada jendela Terminal atau Command Prompt yang terbuka, tekan tombol <code>Ctrl + C</code> di keyboard untuk menghentikan program.
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--border-color); font-size: 0.85rem; color: var(--text-muted);">
+            Ikhlas Beramal by <strong style="color: var(--primary);">@ilyasbp</strong>
+        </div>
+
+    </div>
+
+    <script>
+        function toggleFaq(element) {
+            const item = element.parentElement;
+            item.classList.toggle('open');
+        }
+    </script>
+</body>
+</html>

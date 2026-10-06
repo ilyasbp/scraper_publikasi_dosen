@@ -1,0 +1,13 @@
+# Hasil output file
+hasil_scraping/
+*.xlsx
+
+# Python & virtual environment
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Sistem operasi
+.DS_Store
+Thumbs.db
