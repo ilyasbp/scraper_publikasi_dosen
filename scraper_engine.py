@@ -649,6 +649,17 @@ class GoogleScholarScraper:
     def is_stopped(self) -> bool:
         return bool(self.stop_check and self.stop_check())
 
+    def _interruptible_sleep(self, duration: float) -> bool:
+        """Tidur dengan pengecekan status stop berkala setiap 0.1 detik agar responsif seketika."""
+        step = 0.1
+        elapsed = 0.0
+        while elapsed < duration:
+            if self.is_stopped():
+                return False
+            time.sleep(min(step, duration - elapsed))
+            elapsed += step
+        return not self.is_stopped()
+
     def save_data(self):
         """Menyimpan seluruh data yang telah diekstrak ke dalam berkas Excel terstruktur."""
         if not self.records:
@@ -742,14 +753,15 @@ class GoogleScholarScraper:
             while True:
                 if self.is_stopped():
                     break
-                time.sleep(2)
+                if not self._interruptible_sleep(2.0):
+                    break
                 cur_url = self.driver.current_url.lower()
                 src = self.driver.page_source.lower()
                 if 'sorry/index' not in cur_url and not ('recaptcha' in src and 'google.com/sorry' in cur_url):
                     self.log("CAPTCHA berhasil diverifikasi! Melanjutkan scraping...")
                     self.on_captcha(False)
                     self.on_status("Melanjutkan proses...")
-                    time.sleep(1)
+                    self._interruptible_sleep(1.0)
                     break
         else:
             self.on_captcha(False)
@@ -869,7 +881,8 @@ class GoogleScholarScraper:
                     more_btn = self.driver.find_element(By.ID, 'gsc_bpf_more')
                     if more_btn.is_enabled() and 'disabled' not in more_btn.get_attribute('class'):
                         self.driver.execute_script('arguments[0].click();', more_btn)
-                        time.sleep(1.2)
+                        if not self._interruptible_sleep(1.2):
+                            break
                     else:
                         break
                 except Exception:
@@ -956,7 +969,8 @@ class GoogleScholarScraper:
                     if self.is_stopped():
                         break
 
-                    time.sleep(random.uniform(self.min_delay, self.max_delay))
+                    if not self._interruptible_sleep(random.uniform(self.min_delay, self.max_delay)):
+                        break
                     soup = BeautifulSoup(self.driver.page_source, 'html.parser')
 
                     t_elem = soup.find('div', id='gsc_oci_title')
@@ -1046,7 +1060,8 @@ class GoogleScholarScraper:
                         f"({record['Status Penulis']} | {record['Jenis Jurnal']} | {record['Terindeks']} | "
                         f"Sitasi {self.start_year}-{self.end_year}: {record['Total Sitasi Periode']})"
                     )
-                    time.sleep(random.uniform(self.min_delay, self.max_delay))
+                    if not self._interruptible_sleep(random.uniform(self.min_delay, self.max_delay)):
+                        break
 
                 except Exception as ex:
                     self.log(f"Gagal memuat detail {title[:30]}... ({ex}). Menyimpan metadata dasar.")
@@ -1065,7 +1080,8 @@ class GoogleScholarScraper:
                     self.records.append(fallback_record)
                     self.processed_titles.add(title.strip().lower())
                     self.save_data()
-                    time.sleep(1.0)
+                    if not self._interruptible_sleep(1.0):
+                        break
 
         except Exception as e:
             self.log(f"Error saat scraping: {e}")
@@ -1193,7 +1209,10 @@ class ScrapingJob:
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self.thread.start()
 
-    def stop(self):
-        if self.is_running:
-            self.stop_requested = True
-            self.add_log("Permintaan stop diterima. Menyimpan data Excel dan menutup browser...")
+    def stop(self, wait: bool = False, timeout: float = 2.0):
+        self.stop_requested = True
+        self.add_log("Permintaan stop diterima. Menyimpan data Excel dan menutup browser...")
+        if wait and self.thread and self.thread.is_alive():
+            self.thread.join(timeout=timeout)
+            if not self.thread.is_alive():
+                self.is_running = False

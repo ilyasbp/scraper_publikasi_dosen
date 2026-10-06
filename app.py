@@ -238,7 +238,8 @@ def render_scraper_tab() -> None:
             min_delay, max_delay = 0.8, 1.5
 
     job: Optional[ScrapingJob] = st.session_state.job
-    is_running = bool(job and job.is_running)
+    # Job dianggap aktif hanya jika thread berjalan dan tidak sedang diminta berhenti
+    is_running = bool(job and job.is_running and not job.stop_requested)
 
     # Tombol Aksi Tunggal (Mulai / Berhenti)
     if not is_running:
@@ -246,6 +247,11 @@ def render_scraper_tab() -> None:
             if start_year > end_year:
                 st.error("Tahun mulai tidak boleh lebih besar dari tahun akhir.")
             else:
+                # Pastikan job sebelumnya berhenti sepenuhnya jika masih ada
+                if job and job.thread and job.thread.is_alive():
+                    job.stop(wait=True, timeout=2.5)
+                    job.is_running = False
+
                 extracted_id = extract_author_id(input_author)
                 new_job = ScrapingJob(
                     author_id=extracted_id,
@@ -263,9 +269,8 @@ def render_scraper_tab() -> None:
     else:
         if st.button("Berhenti", type="secondary", use_container_width=True):
             if job:
-                job.stop()
+                job.stop(wait=False)
                 st.session_state.job_was_running = False
-                st.warning("Mengirim instruksi berhenti...")
                 st.rerun()
 
     st.markdown("---")
@@ -280,7 +285,7 @@ def render_scraper_tab() -> None:
             return
 
         # Deteksi otomatis penyelesaian pekerjaan untuk sinkronisasi tombol
-        if st.session_state.get('job_was_running', False) and not current_job.is_running:
+        if st.session_state.get('job_was_running', False) and (not current_job.is_running or current_job.stop_requested):
             st.session_state.job_was_running = False
             st.rerun(scope="app")
 
@@ -299,7 +304,12 @@ def render_scraper_tab() -> None:
         # Kartu Metrik Ringkas
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         with col_m1:
-            status_text = "Berjalan" if current_job.is_running else ("Berhenti" if current_job.stop_requested else "Selesai")
+            if current_job.stop_requested:
+                status_text = "Berhenti"
+            elif current_job.is_running:
+                status_text = "Berjalan"
+            else:
+                status_text = "Selesai"
             st.metric("Status", status_text)
         with col_m2:
             st.metric("Artikel Diproses", f"{current_job.current_idx} / {current_job.total_pubs or '-'}")
@@ -318,11 +328,11 @@ def render_scraper_tab() -> None:
             pct = min(1.0, current_job.current_idx / current_job.total_pubs)
             title_text = f" — {current_job.current_title[:55]}..." if current_job.current_title else ""
             st.progress(pct, text=f"{int(pct * 100)}% ({current_job.current_idx}/{current_job.total_pubs}){title_text}")
-        elif current_job.is_running:
+        elif current_job.is_running and not current_job.stop_requested:
             st.progress(0.0, text=current_job.status or "Memulai proses...")
 
         # Log Aktivitas
-        with st.expander(f"Log Aktivitas ({len(current_job.logs)})", expanded=current_job.is_running):
+        with st.expander(f"Log Aktivitas ({len(current_job.logs)})", expanded=bool(current_job.is_running and not current_job.stop_requested)):
             log_text = "\n".join(current_job.logs[-50:]) if current_job.logs else "Belum ada aktivitas tercatat."
             st.text_area("Console", value=log_text, height=160, disabled=True, label_visibility="collapsed")
 
