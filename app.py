@@ -154,9 +154,15 @@ def apply_custom_styles() -> None:
             color: #94A3B8;
             font-weight: 500;
         }
-        .footer-highlight {
-            color: #059669;
-            font-weight: 600;
+        .footer-box a {
+            color: #059669 !important;
+            font-weight: 600 !important;
+            text-decoration: none !important;
+            transition: color 0.2s ease;
+        }
+        .footer-box a:hover {
+            color: #047857 !important;
+            text-decoration: underline !important;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -564,10 +570,10 @@ def render_history_tab() -> None:
 
 
 def render_footer() -> None:
-    """Menampilkan footer copyright aplikasi."""
+    """Menampilkan footer copyright aplikasi dengan tautan repositori."""
     st.markdown("""
     <div class="footer-box">
-        Ikhlas Beramal by <span class="footer-highlight">@ilyasbp</span>
+        Ikhlas Beramal by <a href="https://github.com/ilyasbp/scraper_publikasi_dosen" target="_blank" rel="noopener noreferrer">@ilyasbp</a>
     </div>
     """, unsafe_allow_html=True)
 

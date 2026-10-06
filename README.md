@@ -1,8 +1,8 @@
 # 🎓 Scraper Publikasi Dosen & Akreditasi (Scholar + SCImagoJR)
 
-Aplikasi web lokal interaktif berbasis **Streamlit** dan **Selenium** untuk mengekstrak data profil author Google Scholar secara instan, mencakup seluruh riwayat publikasi, metadata akreditasi (jurnal nasional/internasional, publisher resmi, indeksasi SINTA 1-6 & Scopus Q1-Q4 via database resmi SCImagoJR 2025, tanggal terbit lengkap DD/MM/YYYY, volume/edisi/halaman), dan rincian sitasi tahunan langsung ke dalam berkas **Excel (.xlsx)** secara otomatis di folder **`hasil_scraping/`** tanpa perlu login akun.
+Aplikasi web lokal interaktif berbasis **Streamlit** dan **Selenium** untuk mengekstrak data profil author Google Scholar secara instan, mencakup seluruh riwayat publikasi, metadata akreditasi (jurnal nasional/internasional, publisher resmi, indeksasi SINTA 1-6 & Scopus Q1-Q4 via database resmi SCImagoJR, tanggal terbit lengkap DD/MM/YYYY, volume/edisi/halaman), dan rincian sitasi tahunan langsung ke dalam berkas **Excel (.xlsx)** secara otomatis di folder **`hasil_scraping/`**.
 
-> 📖 **Baru pertama kali menggunakan?** Buka berkas [**tutorial penggunaan.html**](tutorial%20penggunaan.html) di browser Anda untuk panduan interaktif lengkap dari nol khusus orang awam!
+> 📖 **Panduan Penggunaan:** Buka berkas [**tutorial_penggunaan.html**](tutorial_penggunaan.html) di browser Anda untuk petunjuk langkah demi langkah.
 
 ---
 
@@ -15,11 +15,10 @@ Aplikasi web lokal interaktif berbasis **Streamlit** dan **Selenium** untuk meng
    - Pemantauan real-time: status scraper, progress bar, metrik publikasi & sitasi, dan live log terminal.
    - Tombol **Hentikan Proses (Stop)** yang aman menyimpan data yang sudah terkumpul.
 
-2. **⚡ Integrasi Database SCImagoJR & Bebas Login (100% Otomatis):**
+2. **⚡ Integrasi Database SCImagoJR (100% Otomatis):**
    - **Database SCImagoJR (32.000+ Jurnal)**: Kuartil resmi Scopus (**`Scopus Q1`**, **`Scopus Q2`**, **`Scopus Q3`**, **`Scopus Q4`**, **`Prosiding Internasional (Scopus)`**) dicocokkan otomatis secara lokal dan instan (< 0.001 detik).
    - **Auto-Detect Versi Terbaru**: Sistem otomatis mendeteksi berkas database terbaru di folder `data/` (misalnya jika Anda menambahkan `scimagojr 2026.csv`, sistem akan otomatis memprioritaskan versi 2026 tanpa ubah kode).
-   - **Tanpa Perlu Login Akun**: Tidak ada lagi kewajiban login akun SINTA atau risiko sesi kedaluwarsa.
-   - **Auto-Lookup SINTA Jurnal Nasional**: Jurnal nasional otomatis dicari ke portal resmi SINTA Kemdiktisaintek untuk mendapatkan status akreditasi resmi (**`SINTA 1`** s/d **`SINTA 6`**) secara publik tanpa login.
+   - **Auto-Lookup SINTA Jurnal Nasional**: Jurnal nasional otomatis dicari ke portal resmi SINTA Kemdiktisaintek untuk mendapatkan status akreditasi resmi (**`SINTA 1`** s/d **`SINTA 6`**).
    - **Ekstraksi Publisher Otomatis**: Dilengkapi kolom **`Publisher`** di sebelah kanan nama jurnal/prosiding (Elsevier, Springer, IEEE, Nature, ACM, dll.).
 
 3. **🛡️ Penanganan CAPTCHA Google Otomatis:**
@@ -48,8 +47,8 @@ Aplikasi web lokal interaktif berbasis **Streamlit** dan **Selenium** untuk meng
 
 ## 🚀 Cara Menjalankan Aplikasi
 
-### Cara 1: Double-Click (Paling Mudah untuk Orang Awam)
-Tidak perlu buka terminal. Script peluncur otomatis mendeteksi dan mengunduh Google Chrome, Python 3, serta semua pustaka yang dibutuhkan jika belum terpasang di komputer:
+### Cara 1: Cukup Klik Dua Kali (Rekomendasi)
+Tidak perlu menjalankan perintah di terminal. Script peluncur otomatis mendeteksi dan mengunduh Google Chrome, Python 3, serta semua pustaka yang dibutuhkan jika belum terpasang di komputer:
 - **Di Mac:** Cukup klik 2x berkas `run_mac.command`
 - **Di Windows:** Cukup klik 2x berkas `run_windows.bat`
 
@@ -75,5 +74,14 @@ Google Scholar Scrapper/
 ├── run_windows.bat            # Launcher double-click Windows
 ├── run.sh                     # Launcher bash satu klik
 ├── requirements.txt           # Daftar pustaka Python
+├── tutorial_penggunaan.html   # Panduan interaktif visual
 └── README.md                  # Dokumentasi ringkas project
 ```
+
+---
+
+<div align="center">
+
+**Ikhlas Beramal by [@ilyasbp](https://github.com/ilyasbp/scraper_publikasi_dosen)**
+
+</div>
