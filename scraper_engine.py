@@ -187,11 +187,11 @@ def load_scimago_database(csv_path: Optional[str] = None) -> Dict[str, Dict[str,
             if q_val in ['Q1', 'Q2', 'Q3', 'Q4']:
                 status = f"Scopus {q_val}"
             elif 'conference' in ptype or 'proceeding' in ptype:
-                status = "Prosiding Internasional (Scopus)"
+                status = "Scopus No-Q"
             elif 'journal' in ptype:
-                status = "Scopus (No-Q)"
+                status = "Scopus No-Q"
             else:
-                status = "Scopus"
+                status = "Scopus No-Q"
 
             info = {
                 'title': raw_title,
@@ -555,7 +555,7 @@ def determine_journal_type(
         idx_lower = str(indexation).lower()
         if any(sc in idx_lower for sc in ['scopus', 'wos', 'web of science', 'prosiding internasional']):
             return "Internasional"
-        if 'sinta' in idx_lower or 'prosiding nasional' in idx_lower:
+        if 'sinta' in idx_lower:
             return "Nasional"
 
     if not venue_name or venue_name.strip() in ['-', '']:
@@ -791,13 +791,13 @@ def determine_indexation(
     is_proceedings = any(pr in v for pr in ['conference', 'proceedings', 'symposium', 'seminar', 'prosiding', 'workshop', 'icts', 'isitia', 'ieee', 'acm'])
 
     if is_intl:
-        return "Prosiding Internasional (Scopus)" if is_proceedings else "Scopus / WoS"
+        return "Scopus No-Q" if is_proceedings else "Scopus / WoS"
 
     # 3. Deteksi Prosiding (Prosiding bukan jurnal SINTA)
     if is_proceedings:
         if any(sc in v or sc in p for sc in ['ieee', 'acm', 'springer', 'iop', 'aip', 'scopus', 'icts', 'isitia', 'elsevier']):
-            return "Prosiding Internasional (Scopus)"
-        return "Prosiding Internasional" if journal_type == "Internasional" else "Prosiding Nasional"
+            return "Scopus No-Q"
+        return "Prosiding Internasional" if journal_type == "Internasional" else "-"
 
     # 4. Lookup SINTA 1-6 untuk jurnal lokal (hanya jika lolos verifikasi nama jurnal)
     if venue_name and str(venue_name).strip() not in ['-', '']:
@@ -805,11 +805,9 @@ def determine_indexation(
         if sinta_status:
             return sinta_status
 
-    # 5. Fallback
+    # 5. Fallback (Jurnal nasional tanpa akreditasi SINTA ditulis '-')
     if journal_type == "Internasional":
         return "Internasional"
-    elif venue_name and venue_name.strip() not in ['-', '']:
-        return "Nasional (Non-SINTA)"
     return "-"
 
 
@@ -1037,7 +1035,7 @@ class GoogleScholarScraper:
                 title=title
             )
 
-            if journal_type == "Internasional" and indexation in ["-", "Nasional (Non-SINTA)"]:
+            if journal_type == "Internasional" and indexation == "-":
                 indexation = determine_indexation(
                     venue_name,
                     journal_type="Internasional",
