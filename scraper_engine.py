@@ -438,12 +438,12 @@ def is_international_publisher(publisher: str) -> bool:
         return False
     intl_publishers = [
         'ieee', 'institute of electrical and electronics engineers',
-        'elsevier', 'springer', 'acm', 'wiley', 'nature', 'science',
-        'taylor & francis', 'sage', 'hindawi', 'mdpi', 'emerald', 'oxford',
-        'cambridge', 'frontiers', 'aip', 'iop', 'sciencedirect', 'plos',
-        'world scientific', 'degruyter', 'inderscience', 'bentham'
+        'elsevier', 'springer', 'acm', 'wiley', 'nature publishing',
+        'taylor & francis', 'sage', 'hindawi', 'mdpi', 'emerald', 'oxford university',
+        'cambridge university', 'frontiers', 'aip', 'iop', 'sciencedirect', 'plos',
+        'world scientific', 'degruyter', 'inderscience', 'bentham', 'aaas'
     ]
-    p_lower = str(publisher).lower()
+    p_lower = str(publisher).lower().strip()
     return any(p in p_lower for p in intl_publishers)
 
 
@@ -468,7 +468,7 @@ def determine_journal_type(venue_name: str, publisher: str = "", indexation: str
     v = str(venue_name).lower()
     intl_keywords = [
         'international', 'ieee', 'acm', 'springer', 'elsevier', 'wiley', 'nature',
-        'science', 'taylor & francis', 'sage', 'hindawi', 'mdpi', 'emerald',
+        'taylor & francis', 'sage', 'hindawi', 'mdpi', 'emerald',
         'conference', 'proceedings', 'symposium', 'trans.', 'transactions',
         'letters', 'journal of', 'bulletin of', 'annals of', 'advances in',
         'frontiers in', 'applied', 'computational', 'electronic', 'communications',
@@ -477,7 +477,8 @@ def determine_journal_type(venue_name: str, publisher: str = "", indexation: str
     nasional_keywords = [
         'jurnal', 'berkala', 'warta', 'prosiding seminar nasional', 'seminar nasional',
         'indonesia', 'ilmiah', 'teknik', 'pendidikan', 'rekayasa', 'komputasi',
-        'saintek', 'teknologi', 'informatika', 'penelitian', 'masyarakat', 'kemendikbud'
+        'saintek', 'teknologi', 'informatika', 'penelitian', 'masyarakat', 'kemendikbud',
+        'buku', 'buku ajar', 'buku referensi'
     ]
     has_intl = any(k in v for k in intl_keywords)
     has_nas = any(k in v for k in nasional_keywords)
@@ -485,30 +486,135 @@ def determine_journal_type(venue_name: str, publisher: str = "", indexation: str
         return "Internasional"
     elif has_nas:
         return "Nasional"
-    elif any(w in v for w in ['the', 'and', 'for', 'in', 'on', 'with', 'systems', 'research', 'studies']):
+    elif any(w in v.split() for w in ['the', 'and', 'for', 'in', 'on', 'with', 'systems', 'research', 'studies']):
         return "Internasional"
     return "Nasional"
 
 
-SINTA_CACHE: Dict[str, str] = {}
+SINTA_CACHE: Dict[str, Optional[str]] = {}
 _sinta_session = requests.Session()
 _sinta_session.headers.update({
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 })
 
 
-def lookup_sinta_accreditation(venue_name: str) -> Optional[str]:
-    """Melakukan pencarian akreditasi jurnal nasional resmi (SINTA 1-6) di portal SINTA."""
+def is_sinta_journal_match(venue_name: str, sinta_title: str) -> bool:
+    """Memverifikasi secara ketat apakah nama jurnal di portal SINTA benar-benar cocok
+    dengan nama venue pada artikel Google Scholar (mencegah salah sasaran/false positive)."""
+    if not venue_name or not sinta_title:
+        return False
+
+    def norm(s: str) -> str:
+        s = re.sub(r'[^a-zA-Z0-9\s]', ' ', str(s).lower())
+        return ' '.join(s.split())
+
+    v_norm = norm(venue_name)
+    s_norm = norm(sinta_title)
+
+    if not v_norm or not s_norm:
+        return False
+
+    # 1. Kecocokan persis
+    if v_norm == s_norm:
+        return True
+
+    # 2. Ekstraksi komponen sub-judul / akronim
+    # Contoh SINTA: 'BioLink (Jurnal Biologi Lingkungan, Industri, Kesehatan)'
+    parts_paren = re.findall(r'\((.*?)\)', sinta_title)
+    outside_paren = re.sub(r'\(.*?\)', '', sinta_title).strip()
+    parts_colon = [p.strip() for p in re.split(r'[:\-–]', sinta_title) if p.strip()]
+
+    v_parts_paren = re.findall(r'\((.*?)\)', venue_name)
+    v_outside_paren = re.sub(r'\(.*?\)', '', venue_name).strip()
+    v_parts_colon = [p.strip() for p in re.split(r'[:\-–]', venue_name) if p.strip()]
+
+    candidates_s = [sinta_title, outside_paren] + parts_paren + parts_colon
+    candidates_v = [venue_name, v_outside_paren] + v_parts_paren + v_parts_colon
+
+    for v_c in candidates_v:
+        v_c_norm = norm(v_c)
+        if not v_c_norm or len(v_c_norm) < 3:
+            continue
+        for s_c in candidates_s:
+            s_c_norm = norm(s_c)
+            if not s_c_norm or len(s_c_norm) < 3:
+                continue
+            if v_c_norm == s_c_norm:
+                return True
+            # Hapus prefiks 'jurnal' / 'journal'
+            v_no_j = re.sub(r'^(jurnal|journal)\s+', '', v_c_norm)
+            s_no_j = re.sub(r'^(jurnal|journal)\s+', '', s_c_norm)
+            if v_no_j and s_no_j and v_no_j == s_no_j:
+                return True
+
+    # 3. Analisis kecocokan token kata dengan toleransi singkatan / prefiks
+    def clean_tokens(text: str) -> List[str]:
+        clean = re.sub(r'[^a-zA-Z0-9\s]', ' ', text.lower())
+        clean = re.sub(r'\b(jurnal|journal|of|the|dan|and|indonesian|indonesia|j|in|for|on)\b', ' ', clean)
+        return [w for w in clean.split() if len(w) >= 2]
+
+    v_toks = clean_tokens(venue_name)
+    s_toks = clean_tokens(sinta_title)
+
+    if len(v_toks) >= 2 and len(s_toks) >= 2:
+        def token_match(vt: str, st: str) -> bool:
+            return vt == st or (len(vt) >= 3 and len(st) >= 3 and (vt.startswith(st) or st.startswith(vt)))
+
+        matched_v = sum(1 for vt in v_toks if any(token_match(vt, st) for st in s_toks))
+        matched_s = sum(1 for st in s_toks if any(token_match(st, vt) for vt in v_toks))
+
+        v_ratio = matched_v / len(v_toks)
+        s_ratio = matched_s / len(s_toks)
+        # Kedua nama harus memiliki cakupan kata yang dominan (>= 75% venue dan >= 60% SINTA)
+        if v_ratio >= 0.75 and s_ratio >= 0.60:
+            return True
+
+    return False
+
+
+def lookup_sinta_accreditation(venue_name: str, title: str = "") -> Optional[str]:
+    """Melakukan pencarian akreditasi jurnal nasional resmi (SINTA 1-6) di portal SINTA.
+    Dilengkapi verifikasi kecocokan judul jurnal untuk mencegah salah sasaran (false positive)."""
     if not venue_name or venue_name.strip() in ['-', '']:
         return None
 
+    v_lower = venue_name.lower().strip()
+
+    # Jangan lakukan pencarian SINTA jika publikasi jelas bukan jurnal ilmiah:
+    # 1. Judul adalah Bab Buku (Book Chapter)
+    if title and re.search(r'^\s*(bab|chapter|bagian)\s+\d+', title, re.IGNORECASE):
+        return None
+
+    # 2. Venue adalah buku, prosiding, tesis, skripsi, universitas, dsb.
+    non_journal_indicators = [
+        'buku', 'book', 'monograf', 'skripsi', 'tesis', 'disertasi', 'thesis',
+        'dissertation', 'prosiding', 'proceeding', 'conference', 'seminar',
+        'symposium', 'workshop', 'repository', 'laporan penelitian'
+    ]
+    if any(ind in v_lower for ind in non_journal_indicators):
+        return None
+
+    cache_key = v_lower
+    if cache_key in SINTA_CACHE:
+        return SINTA_CACHE[cache_key]
+
     candidates = []
+
+    # 1. Bagian nama utama sebelum titik dua (e.g. 'Realita: Jurnal Penelitian...')
     if ':' in venue_name:
         col_part = venue_name.split(':')[0].strip()
         col_clean = re.sub(r'[^\w\s]', '', col_part).strip()
-        if len(col_clean) >= 3:
+        if len(col_clean) >= 3 and col_clean.lower() not in ['jurnal', 'journal']:
             candidates.append(col_clean)
 
+    # 2. Akronim sebelum kurung (e.g. 'JIPI (Jurnal IPA...')
+    m_paren = re.match(r'^([A-Za-z0-9\s]{2,15})\s*\(', venue_name)
+    if m_paren:
+        acr = m_paren.group(1).strip()
+        if len(acr) >= 3 and acr.lower() not in ['jurnal', 'journal']:
+            candidates.append(acr)
+
+    # 3. Nama bersih lengkap tanpa vol/no/hal/tahun
     no_par = re.sub(r'\(.*?\)', '', venue_name)
     no_par = re.sub(r'\b(vol|no|pp|hal|issue)\b.*', '', no_par, flags=re.IGNORECASE)
     no_par = re.sub(r'[\d,\.:-]', ' ', no_par).strip()
@@ -516,47 +622,61 @@ def lookup_sinta_accreditation(venue_name: str) -> Optional[str]:
     if full_clean and full_clean not in candidates:
         candidates.append(full_clean)
 
+    # 4. Bagian dalam kurung
+    for ip in re.findall(r'\((.*?)\)', venue_name):
+        ip_clean = ' '.join(re.sub(r'[^\w\s]', '', ip).split())
+        if len(ip_clean) >= 4 and ip_clean not in candidates and ip_clean.lower() not in ['jurnal', 'journal']:
+            candidates.append(ip_clean)
+
+    # 5. Kata pertama jika unik (e.g. 'ORBITA' dari 'ORBITA J. Pendidik...')
     words = full_clean.split()
-    if len(words) > 2:
-        short_w = ' '.join(words[:2])
-        if short_w not in candidates:
-            candidates.append(short_w)
+    if words and len(words[0]) >= 4 and words[0].lower() not in [
+        'jurnal', 'journal', 'berkala', 'warta', 'the', 'indonesian', 'international'
+    ]:
+        if words[0] not in candidates:
+            candidates.append(words[0])
 
     for q in candidates:
-        if q in SINTA_CACHE:
-            return SINTA_CACHE[q]
+        q_norm = q.lower().strip()
+        if len(q_norm) < 3 or q_norm in ['jurnal', 'journal', 'indonesian journal', 'jurnal pendidikan']:
+            continue
 
         try:
             url = f'https://sinta.kemdiktisaintek.go.id/journals?q={requests.utils.quote(q)}'
-            resp = _sinta_session.get(url, timeout=4)
+            resp = _sinta_session.get(url, timeout=5)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 links = soup.find_all('a', href=lambda h: h and '/journals/profile/' in h)
-                for link in links[:3]:
-                    card = link.find_parent('div', class_='col-md') or link.find_parent('div', class_='row')
-                    if card:
-                        accred = card.find('span', class_=lambda c: c and 'accredited' in c)
-                        if accred:
-                            m = re.search(r'S([1-6])', accred.text, re.IGNORECASE)
-                            if m:
-                                res = f'SINTA {m.group(1)}'
-                                SINTA_CACHE[q] = res
+                for link in links[:5]:
+                    sinta_title = link.text.strip()
+                    # VERIFIKASI KETAT: hanya terima jika judul di SINTA cocok dengan venue_name
+                    if is_sinta_journal_match(venue_name, sinta_title):
+                        card = link.find_parent('div', class_='col-md') or link.find_parent('div', class_='row')
+                        if card:
+                            accred = card.find('span', class_=lambda c: c and 'accredited' in c)
+                            if accred:
+                                m = re.search(r'S([1-6])', accred.text, re.IGNORECASE)
+                                if m:
+                                    res = f'SINTA {m.group(1)}'
+                                    SINTA_CACHE[cache_key] = res
+                                    return res
+                            m2 = re.search(r'\b(S[1-6])\b', card.text)
+                            if m2:
+                                res = f'SINTA {m2.group(1)[1]}'
+                                SINTA_CACHE[cache_key] = res
                                 return res
-                        m2 = re.search(r'\b(S[1-6])\b', card.text)
-                        if m2:
-                            res = f'SINTA {m2.group(1)[1]}'
-                            SINTA_CACHE[q] = res
-                            return res
         except Exception:
             pass
 
+    SINTA_CACHE[cache_key] = None
     return None
 
 
-def determine_indexation(venue_name: str, journal_type: str = "", publisher: str = "") -> str:
+def determine_indexation(venue_name: str, journal_type: str = "", publisher: str = "", title: str = "") -> str:
     """Menentukan tingkat indeksasi artikel (Scopus Q1-Q4, SINTA 1-6, Prosiding, atau Nasional)."""
     v = str(venue_name or '').lower()
     p = str(publisher or '').lower()
+    t = str(title or '').lower()
 
     # 1. SCImagoJR 2025 Offline Scopus Matching
     sjr_match = lookup_scimago(venue_name)
@@ -566,23 +686,31 @@ def determine_indexation(venue_name: str, journal_type: str = "", publisher: str
     # 2. Publisher Internasional Bereputasi
     is_intl = is_international_publisher(publisher) or any(sc in v for sc in ['ieee', 'acm', 'springer', 'elsevier'])
     is_proceedings = any(pr in v for pr in ['conference', 'proceedings', 'symposium', 'seminar', 'prosiding', 'workshop', 'icts', 'isitia', 'ieee', 'acm'])
+    is_book = bool(
+        re.search(r'^\s*(bab|chapter|bagian)\s+\d+', t, re.IGNORECASE) or
+        any(bk in v for bk in ['buku', 'book', 'monograf'])
+    )
 
     if is_intl:
         return "Prosiding Internasional (Scopus)" if is_proceedings else "Scopus / WoS"
 
-    # 3. Lookup SINTA 1-6 untuk jurnal lokal
-    if venue_name and str(venue_name).strip() not in ['-', '']:
-        sinta_status = lookup_sinta_accreditation(venue_name)
-        if sinta_status:
-            return sinta_status
-
-    # 4. Prosiding lainnya
+    # 3. Deteksi Prosiding (Prosiding bukan jurnal SINTA)
     if is_proceedings:
         if any(sc in v or sc in p for sc in ['ieee', 'acm', 'springer', 'iop', 'aip', 'scopus', 'icts', 'isitia', 'elsevier']):
             return "Prosiding Internasional (Scopus)"
         return "Prosiding Internasional" if journal_type == "Internasional" else "Prosiding Nasional"
 
-    # 5. Fallback
+    # 4. Deteksi Buku / Bab Buku (Buku bukan jurnal SINTA)
+    if is_book:
+        return "Nasional (Non-SINTA)"
+
+    # 5. Lookup SINTA 1-6 untuk jurnal lokal (hanya jika lolos verifikasi nama jurnal)
+    if venue_name and str(venue_name).strip() not in ['-', '']:
+        sinta_status = lookup_sinta_accreditation(venue_name, title=title)
+        if sinta_status:
+            return sinta_status
+
+    # 6. Fallback
     if journal_type == "Internasional":
         return "Internasional"
     elif venue_name and venue_name.strip() not in ['-', '']:
@@ -787,11 +915,11 @@ class GoogleScholarScraper:
             if scimago_info and scimago_info.get('publisher'):
                 publisher_name = scimago_info['publisher']
 
-        indexation = determine_indexation(venue_name, journal_type="", publisher=publisher_name)
+        indexation = determine_indexation(venue_name, journal_type="", publisher=publisher_name, title=title)
         journal_type = determine_journal_type(venue_name, publisher=publisher_name, indexation=indexation)
 
         if journal_type == "Internasional" and indexation in ["-", "Nasional (Non-SINTA)"]:
-            indexation = determine_indexation(venue_name, journal_type="Internasional", publisher=publisher_name)
+            indexation = determine_indexation(venue_name, journal_type="Internasional", publisher=publisher_name, title=title)
 
         total_range = sum(cites_per_year.get(yr, 0) for yr in self.target_years)
 
