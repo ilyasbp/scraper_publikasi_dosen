@@ -447,8 +447,104 @@ def is_international_publisher(publisher: str) -> bool:
     return any(p in p_lower for p in intl_publishers)
 
 
-def determine_journal_type(venue_name: str, publisher: str = "", indexation: str = "") -> str:
-    """Menentukan jenis publikasi (Internasional vs Nasional)."""
+def detect_is_book(
+    title: str = "",
+    venue_name: str = "",
+    publisher: str = "",
+    fields_dict: Optional[Dict[str, str]] = None
+) -> bool:
+    """Mendeteksi secara cerdas apakah sebuah publikasi bertipe Buku atau Bab Buku (Book Chapter)
+    berdasarkan sinyal field Google Scholar, format judul bab/buku, nama venue, dan penerbit."""
+    fields = fields_dict or {}
+    t = str(title or '').strip()
+    t_lower = t.lower()
+    v = str(venue_name or '').strip()
+    v_lower = v.lower()
+    p = str(publisher or '').strip()
+    p_lower = p.lower()
+    desc = str(fields.get('description') or fields.get('deskripsi') or '').strip().lower()
+
+    # 1. Field resmi Google Scholar secara eksplisit menyebut buku atau ISBN
+    explicit_book_fields = ['book', 'buku', 'isbn']
+    if any(k in fields for k in explicit_book_fields):
+        return True
+
+    # 2. Judul artikel memiliki pola bab buku (Book Chapter)
+    if re.search(r'^\s*(bab|chapter|bagian)\s+\d+', t, re.IGNORECASE):
+        return True
+
+    # 3. Indikator kuat bahwa publikasi adalah jurnal atau konferensi
+    journal_indicators = [
+        'jurnal', 'journal', 'berkala', 'bulletin', 'buletin', 'warta',
+        'conference', 'proceedings', 'prosiding', 'symposium', 'seminar',
+        'workshop', 'trans.', 'transactions', 'letters'
+    ]
+    has_journal_or_conf = (
+        'journal' in fields or 'jurnal' in fields or
+        'conference' in fields or 'konferensi' in fields or
+        any(ji in v_lower for ji in journal_indicators)
+    )
+    if has_journal_or_conf:
+        return False
+
+    # 4. Judul artikel memuat kata kunci buku yang jelas (dan bukan di jurnal/konferensi)
+    explicit_book_title_patterns = [
+        r'\bbuku\s+ajar\b', r'\bbuku\s+teks\b', r'\bbuku\s+referensi\b',
+        r'\bbuku\s+panduan\b', r'\bbuku\s+pedoman\b', r'\bbuku\s+saku\b',
+        r'\bmonograf\b', r'\bbook\s+chapter\b', r'\bbunga\s+rampai\b',
+        r'\bantologi\b', r'\bkapita\s+selekta\b'
+    ]
+    if any(re.search(pat, t_lower) for pat in explicit_book_title_patterns):
+        return True
+
+    # 5. Venue secara eksplisit memuat kata buku / monograf
+    if any(bk in v_lower for bk in ['buku ajar', 'buku referensi', 'buku teks', 'monograf']):
+        return True
+
+    # 6. Deskripsi / Abstrak menyebut 'buku ini', 'buku ajar', 'this book', atau nomor ISBN
+    book_desc_patterns = [
+        r'\bbuku\s+ini\b', r'\bdalam\s+buku\s+ini\b', r'\bhadirnya\s+buku\s+ini\b',
+        r'\bpenulisan\s+buku\s+ini\b', r'\bpenerbitan\s+buku\s+ini\b',
+        r'\bbuku\s+ajar\s+ini\b', r'\bbuku\s+referensi\s+ini\b',
+        r'\bthis\s+book\b', r'\bin\s+this\s+book\b', r'\bthis\s+textbook\b',
+        r'\bisbn\s*:\s*[0-9\-]{9,}\b'
+    ]
+    if any(re.search(pat, desc) for pat in book_desc_patterns):
+        return True
+
+    # 7. Indikator Penerbit Buku (CV., PT., Penerbit, Pustaka, Percetakan, dsb.)
+    book_publisher_keywords = [
+        'cv.', 'cv ', 'pt.', 'pt ', 'ud.', 'penerbit', 'pustaka', 'percetakan', 'deepublish',
+        'erlangga', 'gramedia', 'getpress', 'cendekia muslim', 'imtiyaz',
+        'mediakita', 'mizan', 'prenada', 'prenadamedia', 'rajawali pers',
+        'rajagrafindo', 'raja grafindo', 'salemba', 'bumi aksara', 'sinar grafika',
+        'alumni', 'rekayasa sains', 'kanisius', 'andi offset', 'widina',
+        'lakeisha', 'tahta media', 'bintang surya madani', 'media akademia',
+        'ahlimedia', 'eureka media', 'literasi nusantara', 'insan cendekia',
+        'samudra biru', 'kencana', 'alfabeta', 'graha ilmu', 'zahir publishing',
+        'kita menulis', 'bintang pustaka'
+    ]
+
+    is_pub_book = any(k in p_lower for k in book_publisher_keywords)
+    is_venue_book = any(k in v_lower for k in book_publisher_keywords)
+
+    if is_pub_book or is_venue_book:
+        return True
+
+    return False
+
+
+def determine_journal_type(
+    venue_name: str,
+    publisher: str = "",
+    indexation: str = "",
+    is_book: bool = False,
+    title: str = ""
+) -> str:
+    """Menentukan jenis publikasi (Internasional vs Nasional vs Buku)."""
+    if is_book or indexation == "Buku" or detect_is_book(title=title, venue_name=venue_name, publisher=publisher):
+        return "Buku"
+
     if is_international_publisher(publisher):
         return "Internasional"
 
@@ -477,8 +573,7 @@ def determine_journal_type(venue_name: str, publisher: str = "", indexation: str
     nasional_keywords = [
         'jurnal', 'berkala', 'warta', 'prosiding seminar nasional', 'seminar nasional',
         'indonesia', 'ilmiah', 'teknik', 'pendidikan', 'rekayasa', 'komputasi',
-        'saintek', 'teknologi', 'informatika', 'penelitian', 'masyarakat', 'kemendikbud',
-        'buku', 'buku ajar', 'buku referensi'
+        'saintek', 'teknologi', 'informatika', 'penelitian', 'masyarakat', 'kemendikbud'
     ]
     has_intl = any(k in v for k in intl_keywords)
     has_nas = any(k in v for k in nasional_keywords)
@@ -580,9 +675,8 @@ def lookup_sinta_accreditation(venue_name: str, title: str = "") -> Optional[str
 
     v_lower = venue_name.lower().strip()
 
-    # Jangan lakukan pencarian SINTA jika publikasi jelas bukan jurnal ilmiah:
-    # 1. Judul adalah Bab Buku (Book Chapter)
-    if title and re.search(r'^\s*(bab|chapter|bagian)\s+\d+', title, re.IGNORECASE):
+    # Jangan lakukan pencarian SINTA jika publikasi jelas merupakan buku / bab buku:
+    if detect_is_book(title=title, venue_name=venue_name):
         return None
 
     # 2. Venue adalah buku, prosiding, tesis, skripsi, universitas, dsb.
@@ -672,11 +766,20 @@ def lookup_sinta_accreditation(venue_name: str, title: str = "") -> Optional[str
     return None
 
 
-def determine_indexation(venue_name: str, journal_type: str = "", publisher: str = "", title: str = "") -> str:
-    """Menentukan tingkat indeksasi artikel (Scopus Q1-Q4, SINTA 1-6, Prosiding, atau Nasional)."""
+def determine_indexation(
+    venue_name: str,
+    journal_type: str = "",
+    publisher: str = "",
+    title: str = "",
+    is_book: bool = False
+) -> str:
+    """Menentukan tingkat indeksasi artikel (Scopus Q1-Q4, SINTA 1-6, Prosiding, Buku, atau Nasional)."""
+    # 0. Deteksi Buku / Bab Buku
+    if is_book or journal_type == "Buku" or detect_is_book(title=title, venue_name=venue_name, publisher=publisher):
+        return "Buku"
+
     v = str(venue_name or '').lower()
     p = str(publisher or '').lower()
-    t = str(title or '').lower()
 
     # 1. SCImagoJR 2025 Offline Scopus Matching
     sjr_match = lookup_scimago(venue_name)
@@ -686,10 +789,6 @@ def determine_indexation(venue_name: str, journal_type: str = "", publisher: str
     # 2. Publisher Internasional Bereputasi
     is_intl = is_international_publisher(publisher) or any(sc in v for sc in ['ieee', 'acm', 'springer', 'elsevier'])
     is_proceedings = any(pr in v for pr in ['conference', 'proceedings', 'symposium', 'seminar', 'prosiding', 'workshop', 'icts', 'isitia', 'ieee', 'acm'])
-    is_book = bool(
-        re.search(r'^\s*(bab|chapter|bagian)\s+\d+', t, re.IGNORECASE) or
-        any(bk in v for bk in ['buku', 'book', 'monograf'])
-    )
 
     if is_intl:
         return "Prosiding Internasional (Scopus)" if is_proceedings else "Scopus / WoS"
@@ -700,17 +799,13 @@ def determine_indexation(venue_name: str, journal_type: str = "", publisher: str
             return "Prosiding Internasional (Scopus)"
         return "Prosiding Internasional" if journal_type == "Internasional" else "Prosiding Nasional"
 
-    # 4. Deteksi Buku / Bab Buku (Buku bukan jurnal SINTA)
-    if is_book:
-        return "Nasional (Non-SINTA)"
-
-    # 5. Lookup SINTA 1-6 untuk jurnal lokal (hanya jika lolos verifikasi nama jurnal)
+    # 4. Lookup SINTA 1-6 untuk jurnal lokal (hanya jika lolos verifikasi nama jurnal)
     if venue_name and str(venue_name).strip() not in ['-', '']:
         sinta_status = lookup_sinta_accreditation(venue_name, title=title)
         if sinta_status:
             return sinta_status
 
-    # 6. Fallback
+    # 5. Fallback
     if journal_type == "Internasional":
         return "Internasional"
     elif venue_name and venue_name.strip() not in ['-', '']:
@@ -905,21 +1000,51 @@ class GoogleScholarScraper:
         vol_no_hal: str,
         pub_url: str,
         total_cites: int,
-        cites_per_year: Dict[int, int]
+        cites_per_year: Dict[int, int],
+        fields_dict: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """Helper terpadu untuk menyusun dictionary baris metadata artikel secara konsisten."""
         author_status = determine_author_status(self.author_name, authors_str)
 
-        if publisher_name in ['-', '']:
+        is_book = detect_is_book(
+            title=title,
+            venue_name=venue_name,
+            publisher=publisher_name,
+            fields_dict=fields_dict
+        )
+
+        if publisher_name in ['-', ''] and not is_book:
             scimago_info = lookup_scimago(venue_name)
             if scimago_info and scimago_info.get('publisher'):
                 publisher_name = scimago_info['publisher']
 
-        indexation = determine_indexation(venue_name, journal_type="", publisher=publisher_name, title=title)
-        journal_type = determine_journal_type(venue_name, publisher=publisher_name, indexation=indexation)
+        if is_book:
+            journal_type = "Buku"
+            indexation = "Buku"
+        else:
+            indexation = determine_indexation(
+                venue_name,
+                journal_type="",
+                publisher=publisher_name,
+                title=title,
+                is_book=False
+            )
+            journal_type = determine_journal_type(
+                venue_name,
+                publisher=publisher_name,
+                indexation=indexation,
+                is_book=False,
+                title=title
+            )
 
-        if journal_type == "Internasional" and indexation in ["-", "Nasional (Non-SINTA)"]:
-            indexation = determine_indexation(venue_name, journal_type="Internasional", publisher=publisher_name, title=title)
+            if journal_type == "Internasional" and indexation in ["-", "Nasional (Non-SINTA)"]:
+                indexation = determine_indexation(
+                    venue_name,
+                    journal_type="Internasional",
+                    publisher=publisher_name,
+                    title=title,
+                    is_book=False
+                )
 
         total_range = sum(cites_per_year.get(yr, 0) for yr in self.target_years)
 
@@ -1176,7 +1301,8 @@ class GoogleScholarScraper:
                         vol_no_hal=vol_no_hal,
                         pub_url=pub_url,
                         total_cites=total_cites,
-                        cites_per_year=cites_per_year
+                        cites_per_year=cites_per_year,
+                        fields_dict=fields_dict
                     )
                     self.records.append(record)
                     self.processed_titles.add(title.strip().lower())
@@ -1203,7 +1329,8 @@ class GoogleScholarScraper:
                         vol_no_hal=vol_no_hal,
                         pub_url=pub_url,
                         total_cites=total_cites,
-                        cites_per_year=cites_per_year
+                        cites_per_year=cites_per_year,
+                        fields_dict=None
                     )
                     self.records.append(fallback_record)
                     self.processed_titles.add(title.strip().lower())

@@ -445,7 +445,7 @@ def render_analytics_tab() -> None:
                     names='Jenis Jurnal',
                     values='Jumlah',
                     color='Jenis Jurnal',
-                    color_discrete_map={'Internasional': '#059669', 'Nasional': '#F59E0B'},
+                    color_discrete_map={'Internasional': '#059669', 'Nasional': '#F59E0B', 'Buku': '#3B82F6'},
                     hole=0.45
                 )
                 fig_type.update_layout(height=300, margin=dict(t=20, b=20, l=20, r=20))
