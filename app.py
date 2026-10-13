@@ -10,7 +10,7 @@ import os
 import re
 import zipfile
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 import pandas as pd
 import plotly.express as px
@@ -20,7 +20,9 @@ from scraper_engine import (
     ScrapingJob,
     extract_author_id,
     OUTPUT_DIR,
-    open_output_folder
+    open_output_folder,
+    PUBLICATION_CATEGORIES,
+    classify_publication_category
 )
 
 # ==============================================================================
@@ -543,43 +545,232 @@ def render_scraper_tab() -> None:
 # 3. TAB 2: ANALISIS PUBLIKASI & SITASI
 # ==============================================================================
 
+# Palet warna visual untuk 8 kategori baku publikasi
+CATEGORY_COLORS: Dict[str, str] = {
+    'Jurnal Nasional': '#10B981',                           # emerald
+    'Jurnal Nasional Terakreditasi (Sinta)': '#047857',     # dark emerald
+    'Jurnal Internasional': '#38BDF8',                      # light blue
+    'Jurnal Internasional Bereputasi (Scopus)': '#1D4ED8',  # royal blue
+    'Seminar Nasional': '#F59E0B',                          # amber
+    'Seminar Internasional': '#D97706',                      # dark amber / orange
+    'Buku': '#8B5CF6',                                      # purple
+    'Paten': '#EC4899',                                     # rose
+}
+
+
+def build_summary_table(df: pd.DataFrame, years: List[int]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Menyusun matriks tabel standar akreditasi dan dataframe numerik untuk chart."""
+    matrix = {cat: {y: 0 for y in years} for cat in PUBLICATION_CATEGORIES}
+
+    for _, row in df.iterrows():
+        cat = row.get('Kategori Publikasi')
+        if cat not in matrix:
+            cat = classify_publication_category(row)
+        y = row.get('Clean_Year')
+        if pd.notna(y) and int(y) in matrix.get(cat, {}):
+            matrix[cat][int(y)] += 1
+
+    display_rows = []
+    numeric_rows = []
+    col_totals = {y: 0 for y in years}
+    grand_total = 0
+
+    for cat in PUBLICATION_CATEGORIES:
+        display_dict = {'Jenis Publikasi': cat}
+        numeric_dict = {'Jenis Publikasi': cat}
+        row_total = 0
+        for y in years:
+            val = matrix[cat][y]
+            row_total += val
+            col_totals[y] += val
+            display_dict[str(y)] = val if val > 0 else '-'
+            numeric_dict[str(y)] = val
+        display_dict['Total'] = row_total
+        numeric_dict['Total'] = row_total
+        grand_total += row_total
+        display_rows.append(display_dict)
+        numeric_rows.append(numeric_dict)
+
+    # Baris Total di baris paling bawah
+    total_display_dict = {'Jenis Publikasi': 'Total'}
+    total_numeric_dict = {'Jenis Publikasi': 'Total'}
+    for y in years:
+        total_display_dict[str(y)] = col_totals[y]
+        total_numeric_dict[str(y)] = col_totals[y]
+    total_display_dict['Total'] = grand_total
+    total_numeric_dict['Total'] = grand_total
+    display_rows.append(total_display_dict)
+    numeric_rows.append(total_numeric_dict)
+
+    return pd.DataFrame(display_rows), pd.DataFrame(numeric_rows)
+
+
 def render_analytics_tab() -> None:
-    """Merender tab visualisasi statistik dan grafik performa publikasi dosen."""
-    st.markdown("### Statistik Publikasi & Sitasi")
+    """Merender tab analisis publikasi & sitasi dengan pemilih berkas Excel dan tabel/chart standar akreditasi."""
+    col_a_head, col_a_act = st.columns([3, 1])
+    with col_a_head:
+        st.markdown("### Analisis Publikasi & Sitasi")
+        st.write("Pilih berkas Excel hasil scraping atau sesi aktif untuk menyajikan tabel baku akreditasi dan visualisasi tren publikasi.")
+    with col_a_act:
+        if st.button("Buka Folder Hasil", key="btn_open_folder_analytics", use_container_width=True, help="Buka folder hasil_scraping langsung di komputer"):
+            open_output_folder(OUTPUT_DIR)
+            st.toast("Folder 'hasil_scraping' telah dibuka.")
 
-    analytics_df = None
-    analytics_source_name = ""
+    # 1. Pindai berkas Excel yang tersedia di direktori lokal
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    found_files: Dict[str, str] = {}
+    if os.path.exists(OUTPUT_DIR):
+        for f in os.listdir(OUTPUT_DIR):
+            if f.endswith('.xlsx') and not f.startswith('~$'):
+                found_files[f] = os.path.join(OUTPUT_DIR, f)
+    if os.path.exists("hasil_sitasi"):
+        for f in os.listdir("hasil_sitasi"):
+            if f.endswith('.xlsx') and not f.startswith('~$') and f not in found_files:
+                found_files[f] = os.path.join("hasil_sitasi", f)
 
-    if st.session_state.job and st.session_state.job.records:
-        analytics_df = pd.DataFrame(st.session_state.job.records)
-        if getattr(st.session_state.job, 'is_batch', False):
-            done_count = len(st.session_state.job.batch_results) or st.session_state.job.total_authors
-            analytics_source_name = f"Sesi Batch ({done_count} Dosen)"
-        else:
-            analytics_source_name = f"Sesi Aktif ({st.session_state.job.author_id})"
-    elif st.session_state.selected_history_df is not None:
-        analytics_df = st.session_state.selected_history_df
-        analytics_source_name = st.session_state.active_dataset_name
+    file_items: List[Dict[str, Any]] = []
+    for f_name, full_path in found_files.items():
+        try:
+            stat = os.stat(full_path)
+            mod_time = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
+            size_kb = round(stat.st_size / 1024, 1)
+            file_items.append({
+                'filename': f_name,
+                'path': full_path,
+                'label': f"{f_name} ({size_kb} KB — {mod_time})",
+                'mtime': stat.st_mtime
+            })
+        except Exception:
+            pass
+    file_items.sort(key=lambda x: x['mtime'], reverse=True)
 
-    if analytics_df is None or analytics_df.empty:
-        st.info("Belum ada data untuk dianalisis. Silakan mulai proses di tab Publikasi atau pilih berkas di tab Riwayat Berkas.")
+    # 2. Pilihan Sumber Data Excel
+    source_options = []
+    has_active_session = bool(st.session_state.job and st.session_state.job.records)
+    if has_active_session:
+        source_options.append("Sesi Scraping Aktif")
+    if file_items:
+        source_options.append("Berkas Hasil Scraping")
+    source_options.append("Unggah Berkas Excel (.xlsx)")
+
+    if not source_options:
+        st.info("Belum ada berkas Excel di folder hasil_scraping atau sesi scraping aktif. Silakan jalankan penarikan di tab Publikasi atau unggah berkas Excel.")
+        return
+
+    col_src1, col_src2 = st.columns([1, 2])
+    with col_src1:
+        source_type = st.radio(
+            "Pilihan Sumber Data Excel:",
+            options=source_options,
+            key="analytics_source_type"
+        )
+
+    raw_df: Optional[pd.DataFrame] = None
+    dataset_name = ""
+    selected_sheet_name = ""
+
+    with col_src2:
+        if source_type == "Sesi Scraping Aktif":
+            raw_df = pd.DataFrame(st.session_state.job.records)
+            if getattr(st.session_state.job, 'is_batch', False):
+                done_c = len(st.session_state.job.batch_results) or st.session_state.job.total_authors
+                dataset_name = f"Sesi Batch ({done_c} Profil)"
+            else:
+                dataset_name = f"Sesi Aktif ({st.session_state.job.author_name or st.session_state.job.author_id})"
+            st.success(f"Memuat data dari **{dataset_name}** ({len(raw_df)} publikasi).")
+
+        elif source_type == "Berkas Hasil Scraping":
+            file_choice_label = st.selectbox(
+                "Pilih Berkas Excel:",
+                options=[item['label'] for item in file_items],
+                key="analytics_file_select"
+            )
+            if file_choice_label:
+                selected_item = next(it for it in file_items if it['label'] == file_choice_label)
+                chosen_path = selected_item['path']
+                dataset_name = selected_item['filename']
+                try:
+                    excel_file = pd.ExcelFile(chosen_path)
+                    sheet_names = excel_file.sheet_names
+                    if len(sheet_names) > 1:
+                        sheet_choice = st.selectbox(
+                            "Pilih Lembar Kerja (Sheet):",
+                            options=sheet_names,
+                            index=0,
+                            key="analytics_sheet_select"
+                        )
+                        selected_sheet_name = sheet_choice
+                        raw_df = pd.read_excel(chosen_path, sheet_name=sheet_choice)
+                    else:
+                        selected_sheet_name = sheet_names[0]
+                        raw_df = pd.read_excel(chosen_path, sheet_name=selected_sheet_name)
+                except Exception as ex:
+                    st.error(f"Gagal membaca berkas Excel: {ex}")
+                    return
+
+        elif source_type == "Unggah Berkas Excel (.xlsx)":
+            uploaded_file = st.file_uploader(
+                "Unggah berkas Excel (.xlsx):",
+                type=["xlsx"],
+                key="analytics_file_upload"
+            )
+            if uploaded_file is not None:
+                dataset_name = uploaded_file.name
+                try:
+                    excel_file = pd.ExcelFile(uploaded_file)
+                    sheet_names = excel_file.sheet_names
+                    if len(sheet_names) > 1:
+                        sheet_choice = st.selectbox(
+                            "Pilih Lembar Kerja (Sheet):",
+                            options=sheet_names,
+                            index=0,
+                            key="analytics_uploaded_sheet_select"
+                        )
+                        selected_sheet_name = sheet_choice
+                        raw_df = pd.read_excel(uploaded_file, sheet_name=sheet_choice)
+                    else:
+                        selected_sheet_name = sheet_names[0]
+                        raw_df = pd.read_excel(uploaded_file, sheet_name=selected_sheet_name)
+                except Exception as ex:
+                    st.error(f"Gagal membaca berkas Excel yang diunggah: {ex}")
+                    return
+            else:
+                st.info("Silakan unggah berkas `.xlsx` hasil penarikan Google Scholar untuk dianalisis.")
+                return
+
+    if raw_df is None or raw_df.empty:
+        st.warning("Data kosong atau belum dipilih.")
         return
 
     # Filter Dosen jika data batch / memuat beberapa dosen
+    analytics_df = raw_df.copy()
     if 'Profil Dosen' in analytics_df.columns and analytics_df['Profil Dosen'].nunique() > 1:
         dosen_opts = ["Semua Dosen (Gabungan)"] + sorted(list(analytics_df['Profil Dosen'].dropna().unique()))
-        selected_dosen_filter = st.selectbox("Pilih Dosen untuk Analisis:", options=dosen_opts)
+        selected_dosen_filter = st.selectbox("Filter Dosen untuk Analisis:", options=dosen_opts, key="analytics_dosen_filter")
         if selected_dosen_filter != "Semua Dosen (Gabungan)":
             analytics_df = analytics_df[analytics_df['Profil Dosen'] == selected_dosen_filter]
-            analytics_source_name = f"{analytics_source_name} — {selected_dosen_filter}"
+            dataset_name = f"{dataset_name} — {selected_dosen_filter}"
 
-    st.caption(f"Sumber: {analytics_source_name} ({len(analytics_df)} publikasi)")
+    # Pastikan Kategori Publikasi tersedia
+    if 'Kategori Publikasi' not in analytics_df.columns or analytics_df['Kategori Publikasi'].isnull().any():
+        analytics_df['Kategori Publikasi'] = analytics_df.apply(classify_publication_category, axis=1)
 
-    # Kolom sitasi per tahun
+    # Ekstrak Tahun Publikasi Bersih
+    year_col = 'Tahun' if 'Tahun' in analytics_df.columns else ('Tahun Terbit' if 'Tahun Terbit' in analytics_df.columns else None)
+    if year_col:
+        analytics_df['Clean_Year'] = pd.to_numeric(analytics_df[year_col], errors='coerce')
+    else:
+        if 'Tanggal Terbit' in analytics_df.columns:
+            extracted_y = analytics_df['Tanggal Terbit'].astype(str).str.extract(r'\b(20\d{2}|19\d{2})\b')[0]
+            analytics_df['Clean_Year'] = pd.to_numeric(extracted_y, errors='coerce')
+        else:
+            analytics_df['Clean_Year'] = None
+
+    # Kolom sitasi per tahun jika ada
     year_cols = [c for c in analytics_df.columns if re.match(r'^Sitasi\s+\d{4}$', c)]
     year_cols = sorted(year_cols, key=lambda x: int(re.search(r'\d{4}', x).group(0)))
 
-    # Kolom total periode & lifetime
+    # Kolom total periode & lifetime sitasi
     if 'Total Sitasi Periode' in analytics_df.columns:
         range_col = 'Total Sitasi Periode'
     else:
@@ -592,9 +783,10 @@ def render_analytics_tab() -> None:
         lifetime_col = 'Total Sitasi (Sepanjang Masa)' if 'Total Sitasi (Sepanjang Masa)' in analytics_df.columns else None
 
     title_col = 'Judul Publikasi' if 'Judul Publikasi' in analytics_df.columns else 'Judul'
-    year_col = 'Tahun' if 'Tahun' in analytics_df.columns else ('Tahun Terbit' if 'Tahun Terbit' in analytics_df.columns else None)
 
-    # Ringkasan KPI
+    st.markdown("---")
+
+    # 3. Ringkasan KPI
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     with kpi1:
         st.metric("Total Publikasi", len(analytics_df))
@@ -610,64 +802,147 @@ def render_analytics_tab() -> None:
 
     st.markdown("---")
 
-    # Komposisi Status Penulis & Jenis Jurnal
-    if 'Status Penulis' in analytics_df.columns or 'Jenis Jurnal' in analytics_df.columns:
-        col_akred1, col_akred2 = st.columns(2)
-        with col_akred1:
-            if 'Status Penulis' in analytics_df.columns:
-                st.markdown("#### Peran Penulis")
-                status_counts = analytics_df['Status Penulis'].value_counts().reset_index()
-                status_counts.columns = ['Status Penulis', 'Jumlah']
-                fig_status = px.pie(
-                    status_counts,
-                    names='Status Penulis',
-                    values='Jumlah',
-                    color='Status Penulis',
-                    color_discrete_map={'Penulis Pertama': '#059669', 'Penulis Anggota': '#A7F3D0'},
-                    hole=0.45
-                )
-                fig_status.update_layout(height=300, margin=dict(t=20, b=20, l=20, r=20))
-                st.plotly_chart(fig_status, use_container_width=True)
+    # 4. TABEL STANDAR AKREDITASI (JENIS PUBLIKASI PER TAHUN)
+    st.markdown("#### Tabel Ringkasan Jenis Publikasi")
+    st.caption("Matriks baku publikasi berdasarkan klasifikasi akreditasi jurnal, seminar, buku, dan paten.")
 
-        with col_akred2:
-            if 'Jenis Jurnal' in analytics_df.columns:
-                st.markdown("#### Jenis Publikasi")
-                type_counts = analytics_df['Jenis Jurnal'].value_counts().reset_index()
-                type_counts.columns = ['Jenis Jurnal', 'Jumlah']
-                fig_type = px.pie(
-                    type_counts,
-                    names='Jenis Jurnal',
-                    values='Jumlah',
-                    color='Jenis Jurnal',
-                    color_discrete_map={'Internasional': '#059669', 'Nasional': '#F59E0B', 'Buku': '#3B82F6'},
-                    hole=0.45
-                )
-                fig_type.update_layout(height=300, margin=dict(t=20, b=20, l=20, r=20))
-                st.plotly_chart(fig_type, use_container_width=True)
+    # Deteksi rentang tahun
+    valid_years = sorted([int(y) for y in analytics_df['Clean_Year'].dropna().unique() if 1990 <= y <= 2035])
+    cite_years = sorted([int(re.search(r'\d{4}', c).group(0)) for c in year_cols])
 
-        st.markdown("---")
+    if cite_years:
+        target_year_range = list(range(min(cite_years), max(cite_years) + 1))
+    elif valid_years:
+        if any(2023 <= y <= 2026 for y in valid_years):
+            target_year_range = [2023, 2024, 2025, 2026]
+        else:
+            target_year_range = valid_years[-4:]
+    else:
+        target_year_range = [2023, 2024, 2025, 2026]
 
-    # Visualisasi Tren Sitasi & Top Publikasi
+    # Filter pilihan tahun untuk tabel
+    col_yr_ctrl1, col_yr_ctrl2 = st.columns([2, 1])
+    with col_yr_ctrl1:
+        year_filter_mode = st.radio(
+            "Pilihan Kolom Tahun:",
+            options=[
+                f"Tahun Target ({min(target_year_range)} - {max(target_year_range)})",
+                f"Semua Tahun dalam Berkas ({min(valid_years)} - {max(valid_years)})" if valid_years and (min(valid_years) < min(target_year_range) or max(valid_years) > max(target_year_range)) else f"Semua Tahun ({min(target_year_range)} - {max(target_year_range)})"
+            ],
+            horizontal=True,
+            key="analytics_year_filter_mode"
+        )
+    if "Semua Tahun dalam Berkas" in year_filter_mode and valid_years:
+        selected_table_years = list(range(min(valid_years), max(valid_years) + 1))
+    else:
+        selected_table_years = target_year_range
+
+    summary_display_df, summary_numeric_df = build_summary_table(analytics_df, selected_table_years)
+
+    st.dataframe(summary_display_df, use_container_width=True, hide_index=True)
+
+    # Tombol Ekspor Tabel Ringkasan
+    col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 2])
+    with col_exp1:
+        csv_data = summary_display_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Unduh Tabel (CSV)",
+            data=csv_data,
+            file_name=f"ringkasan_jenis_publikasi_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    with col_exp2:
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            summary_display_df.to_excel(writer, index=False, sheet_name="Ringkasan Publikasi")
+        st.download_button(
+            label="Unduh Tabel (Excel)",
+            data=excel_buffer.getvalue(),
+            file_name=f"ringkasan_jenis_publikasi_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+    st.markdown("---")
+
+    # 5. VISUALISASI GRAFIK (CHARTS)
+    st.markdown("#### Visualisasi Grafik")
+
+    col_chart_top1, col_chart_top2 = st.columns(2)
+    with col_chart_top1:
+        # Stacked Bar Chart: Distribusi Jenis Publikasi per Tahun
+        chart_sub_df = summary_numeric_df[summary_numeric_df['Jenis Publikasi'] != 'Total'].copy()
+        melted_df = chart_sub_df.melt(
+            id_vars=['Jenis Publikasi'],
+            value_vars=[str(y) for y in selected_table_years],
+            var_name='Tahun',
+            value_name='Jumlah'
+        )
+        fig_trend = px.bar(
+            melted_df,
+            x='Tahun',
+            y='Jumlah',
+            color='Jenis Publikasi',
+            color_discrete_map=CATEGORY_COLORS,
+            barmode='stack',
+            text='Jumlah',
+            title="Tren Jenis Publikasi per Tahun"
+        )
+        fig_trend.update_traces(textposition='inside', insidetextanchor='middle')
+        fig_trend.for_each_trace(lambda t: t.update(text=[str(v) if v > 0 else "" for v in t.y]))
+        fig_trend.update_layout(
+            height=380,
+            margin=dict(t=40, b=20, l=20, r=20),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.4, xanchor="center", x=0.5)
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+    with col_chart_top2:
+        # Donut Chart: Proporsi Keseluruhan
+        cat_totals = chart_sub_df[['Jenis Publikasi', 'Total']].copy()
+        cat_totals = cat_totals[cat_totals['Total'] > 0]
+        if not cat_totals.empty:
+            fig_donut = px.pie(
+                cat_totals,
+                names='Jenis Publikasi',
+                values='Total',
+                color='Jenis Publikasi',
+                color_discrete_map=CATEGORY_COLORS,
+                hole=0.45,
+                title="Proporsi Kategori Publikasi"
+            )
+            fig_donut.update_layout(
+                height=380,
+                margin=dict(t=40, b=20, l=20, r=20),
+                legend=dict(orientation="h", yanchor="bottom", y=-0.4, xanchor="center", x=0.5)
+            )
+            st.plotly_chart(fig_donut, use_container_width=True)
+        else:
+            st.info("Belum ada publikasi pada rentang tahun ini.")
+
+    # Grafik Sitasi & Peran Penulis jika datanya tersedia
     if year_cols:
-        col_chart1, col_chart2 = st.columns([1, 1])
-        with col_chart1:
-            st.markdown("#### Pertumbuhan Sitasi per Tahun")
+        st.markdown("---")
+        col_c_sit1, col_c_sit2 = st.columns(2)
+        with col_c_sit1:
+            st.markdown("##### Pertumbuhan Sitasi per Tahun")
             yearly_sums = {int(re.search(r'\d{4}', c).group(0)): int(analytics_df[c].sum()) for c in year_cols}
-            trend_df = pd.DataFrame(list(yearly_sums.items()), columns=['Tahun', 'Jumlah Sitasi'])
-            fig_trend = px.bar(
-                trend_df,
+            trend_sit_df = pd.DataFrame(list(yearly_sums.items()), columns=['Tahun', 'Jumlah Sitasi'])
+            fig_sit_trend = px.bar(
+                trend_sit_df,
                 x='Tahun',
                 y='Jumlah Sitasi',
                 text='Jumlah Sitasi',
                 color='Jumlah Sitasi',
                 color_continuous_scale='Greens'
             )
-            fig_trend.update_traces(textposition='outside')
-            fig_trend.update_layout(xaxis=dict(tickmode='linear'), height=350, margin=dict(t=20, b=20, l=20, r=20))
-            st.plotly_chart(fig_trend, use_container_width=True)
+            fig_sit_trend.update_traces(textposition='outside')
+            fig_sit_trend.update_layout(xaxis=dict(tickmode='linear'), height=340, margin=dict(t=20, b=20, l=20, r=20))
+            st.plotly_chart(fig_sit_trend, use_container_width=True)
 
-        with col_chart2:
-            st.markdown("#### Top 10 Publikasi Terbanyak Disitasi")
+        with col_c_sit2:
+            st.markdown("##### Top 10 Publikasi Terbanyak Disitasi")
             sort_col = range_col or lifetime_col or year_cols[-1]
             top_df = analytics_df.sort_values(by=sort_col, ascending=False).head(10).copy()
             top_df['Judul_Short'] = top_df[title_col].apply(lambda x: str(x)[:40] + '...' if len(str(x)) > 40 else str(x))
@@ -681,99 +956,28 @@ def render_analytics_tab() -> None:
                 color=sort_col,
                 color_continuous_scale='Greens'
             )
-            fig_top.update_layout(yaxis=dict(autorange="reversed"), height=350, margin=dict(t=20, b=20, l=20, r=20))
+            fig_top.update_layout(yaxis=dict(autorange="reversed"), height=340, margin=dict(t=20, b=20, l=20, r=20))
             st.plotly_chart(fig_top, use_container_width=True)
 
-    # Distribusi Publikasi Berdasarkan Tahun Terbit
-    if year_col and year_col in analytics_df.columns:
-        st.markdown("#### Distribusi Publikasi per Tahun Terbit")
-        pub_year_counts = analytics_df[year_col].value_counts().reset_index()
-        pub_year_counts.columns = [year_col, 'Jumlah Publikasi']
-        pub_year_counts = pub_year_counts[pub_year_counts[year_col] != '-']
-        pub_year_counts[year_col] = pd.to_numeric(pub_year_counts[year_col], errors='coerce')
-        pub_year_counts = pub_year_counts.dropna().sort_values(by=year_col)
-
-        fig_dist = px.line(
-            pub_year_counts,
-            x=year_col,
-            y='Jumlah Publikasi',
-            markers=True
+    if 'Status Penulis' in analytics_df.columns:
+        st.markdown("---")
+        st.markdown("##### Peran Penulis")
+        status_counts = analytics_df['Status Penulis'].value_counts().reset_index()
+        status_counts.columns = ['Status Penulis', 'Jumlah']
+        fig_status = px.pie(
+            status_counts,
+            names='Status Penulis',
+            values='Jumlah',
+            color='Status Penulis',
+            color_discrete_map={'Penulis Pertama': '#059669', 'Penulis Anggota': '#A7F3D0'},
+            hole=0.45
         )
-        fig_dist.update_traces(line_color='#059669')
-        fig_dist.update_layout(height=300, margin=dict(t=20, b=20, l=20, r=20))
-        st.plotly_chart(fig_dist, use_container_width=True)
+        fig_status.update_layout(height=280, margin=dict(t=20, b=20, l=20, r=20))
+        st.plotly_chart(fig_status, use_container_width=True)
 
-
-# ==============================================================================
-# 4. TAB 3: RIWAYAT BERKAS TERSIMPAN
-# ==============================================================================
-
-def render_history_tab() -> None:
-    """Merender tab daftar berkas hasil scraping tersimpan dan pratinjau."""
-    col_h_head, col_h_act = st.columns([3, 1])
-    with col_h_head:
-        st.markdown("### Riwayat Berkas")
-        st.write("Daftar berkas Excel hasil scraping yang tersimpan di direktori `hasil_scraping/`:")
-    with col_h_act:
-        if st.button("Buka Hasil", key="btn_open_folder_tab3", use_container_width=True, help="Buka folder hasil_scraping langsung di komputer Anda"):
-            open_output_folder(OUTPUT_DIR)
-            st.toast("Folder 'hasil_scraping' telah dibuka.")
-
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    found_files: Dict[str, str] = {}
-    if os.path.exists(OUTPUT_DIR):
-        for f in os.listdir(OUTPUT_DIR):
-            if f.endswith('.xlsx') and not f.startswith('~$'):
-                found_files[f] = os.path.join(OUTPUT_DIR, f)
-    if os.path.exists("hasil_sitasi"):
-        for f in os.listdir("hasil_sitasi"):
-            if f.endswith('.xlsx') and not f.startswith('~$') and f not in found_files:
-                found_files[f] = os.path.join("hasil_sitasi", f)
-
-    if not found_files:
-        st.info("Belum ditemukan berkas di folder hasil_scraping.")
-        return
-
-    file_details: List[Dict[str, Any]] = []
-    for f_name, full_path in found_files.items():
-        stat = os.stat(full_path)
-        mod_time = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-        size_kb = round(stat.st_size / 1024, 1)
-        file_details.append({
-            'Nama Berkas': f_name,
-            'Ukuran': f"{size_kb} KB",
-            'Terakhir Dimodifikasi': mod_time,
-            'path': full_path
-        })
-
-    file_details.sort(key=lambda x: x['Terakhir Dimodifikasi'], reverse=True)
-    history_meta_df = pd.DataFrame(file_details)
-    st.dataframe(history_meta_df[['Nama Berkas', 'Ukuran', 'Terakhir Dimodifikasi']], use_container_width=True, hide_index=True)
-
-    st.markdown("---")
-    st.markdown("#### Pratinjau Berkas")
-
-    selected_file = st.selectbox(
-        "Pilih berkas Excel:",
-        options=[d['Nama Berkas'] for d in file_details]
-    )
-
-    if selected_file:
-        chosen_item = next(d for d in file_details if d['Nama Berkas'] == selected_file)
-        target_path = chosen_item['path']
-        try:
-            preview_df = pd.read_excel(target_path)
-            st.write(f"Menampilkan isi **{selected_file}** ({len(preview_df)} publikasi):")
-            st.dataframe(preview_df, use_container_width=True, height=280, hide_index=True)
-
-            if st.button("Buka di Tab Analisis", use_container_width=True):
-                st.session_state.selected_history_df = preview_df
-                st.session_state.active_dataset_name = selected_file
-                st.success(f"Berkas '{selected_file}' berhasil dimuat ke Tab Analisis.")
-
-        except Exception as ex:
-            st.error(f"Gagal memuat berkas {selected_file}: {ex}")
+    # Pratinjau Data Lengkap
+    with st.expander(f"Pratinjau Data Lengkap ({len(analytics_df)} Baris)"):
+        st.dataframe(analytics_df, use_container_width=True, height=260, hide_index=True)
 
 
 def render_footer() -> None:
@@ -786,7 +990,7 @@ def render_footer() -> None:
 
 
 # ==============================================================================
-# 5. TITIK MASUK UTAMA APLIKASI
+# 4. TITIK MASUK UTAMA APLIKASI
 # ==============================================================================
 
 def main() -> None:
@@ -795,10 +999,9 @@ def main() -> None:
     apply_custom_styles()
     render_header()
 
-    tab_scraper, tab_analytics, tab_history = st.tabs([
+    tab_scraper, tab_analytics = st.tabs([
         "Publikasi",
-        "Analisis",
-        "Riwayat Berkas"
+        "Analisis"
     ])
 
     with tab_scraper:
@@ -806,9 +1009,6 @@ def main() -> None:
 
     with tab_analytics:
         render_analytics_tab()
-
-    with tab_history:
-        render_history_tab()
 
     render_footer()
 

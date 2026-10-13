@@ -811,6 +811,135 @@ def determine_indexation(
     return "-"
 
 
+def detect_is_patent(
+    title: str = "",
+    venue_name: str = "",
+    publisher: str = "",
+    fields_dict: Optional[Dict[str, str]] = None
+) -> bool:
+    """Mendeteksi apakah artikel merupakan Paten atau Hak Kekayaan Intelektual."""
+    fields = fields_dict or {}
+    t = str(title or '').lower()
+    v = str(venue_name or '').lower()
+    p = str(publisher or '').lower()
+    desc = str(fields.get('description') or fields.get('deskripsi') or '').lower()
+
+    if any(k in fields for k in ['patent', 'paten', 'patent office', 'nomor paten', 'patent number']):
+        return True
+
+    patent_patterns = [
+        r'\b(paten|patent|patents)\b',
+        r'\b(hak cipta|hki|ha-ki)\b',
+        r'\b(idp\s*000\d+|ids\s*000\d+)\b',
+        r'\b(us\s*patent|ep\s*patent|wo\s*patent)\b',
+        r'\b(kemenkumham|kekayaan intelektual|dirjen ki)\b'
+    ]
+    if any(re.search(pat, v) for pat in patent_patterns):
+        return True
+    if any(re.search(pat, p) for pat in patent_patterns):
+        return True
+    if any(re.search(pat, desc) for pat in [r'\b(paten|patent)\b', r'\b(idp\s*000\d+|ids\s*000\d+)\b']):
+        return True
+    if any(re.search(pat, t) for pat in [
+        r'\b(paten sederhana|paten granted|us patent|nomor paten)\b',
+        r'\b(idp\s*000\d+|ids\s*000\d+)\b'
+    ]):
+        return True
+    return False
+
+
+PUBLICATION_CATEGORIES = [
+    "Jurnal Nasional",
+    "Jurnal Nasional Terakreditasi (Sinta)",
+    "Jurnal Internasional",
+    "Jurnal Internasional Bereputasi (Scopus)",
+    "Seminar Nasional",
+    "Seminar Internasional",
+    "Buku",
+    "Paten"
+]
+
+
+def classify_publication_category(row: Dict[str, Any]) -> str:
+    """Mengklasifikasikan artikel/publikasi ke dalam 8 kategori baku standar akreditasi:
+    1. Jurnal Nasional
+    2. Jurnal Nasional Terakreditasi (Sinta)
+    3. Jurnal Internasional
+    4. Jurnal Internasional Bereputasi (Scopus)
+    5. Seminar Nasional
+    6. Seminar Internasional
+    7. Buku
+    8. Paten
+    """
+    title = str(row.get('Judul Publikasi') or row.get('Judul') or '').strip()
+    venue = str(row.get('Nama Jurnal / Prosiding') or row.get('Venue') or '').strip()
+    j_type = str(row.get('Jenis Jurnal') or '').strip()
+    idx = str(row.get('Terindeks') or '').strip()
+    pub = str(row.get('Publisher') or '').strip()
+
+    t_lower = title.lower()
+    v_lower = venue.lower()
+    i_lower = idx.lower()
+
+    # 1. Paten
+    if detect_is_patent(title=title, venue_name=venue, publisher=pub):
+        return "Paten"
+
+    # 2. Buku
+    if j_type == "Buku" or idx == "Buku" or "buku" in i_lower:
+        return "Buku"
+    if detect_is_book(title=title, venue_name=venue, publisher=pub):
+        return "Buku"
+
+    # 3. Seminar / Prosiding (Seminar Nasional & Seminar Internasional)
+    conf_kws = [
+        'conference', 'proceedings', 'prosiding', 'symposium', 'seminar',
+        'workshop', 'kongres', 'kolokium', 'annual meeting', 'icts', 'isitia',
+        'snati', 'semnas', 'sntki', 'semnastek', 'pertemuan ilmiah'
+    ]
+    is_conf = (
+        any(k in v_lower for k in conf_kws) or
+        'prosiding' in i_lower or
+        'no-q' in i_lower or
+        'no-q' in v_lower
+    )
+
+    if is_conf:
+        is_intl_conf = (
+            'internasional' in i_lower or
+            'scopus' in i_lower or
+            j_type == 'Internasional' or
+            any(k in v_lower for k in ['international', 'ieee', 'acm', 'springer', 'iop', 'aip', 'elsevier']) or
+            is_international_publisher(pub)
+        )
+        is_explicit_national = (
+            'seminar nasional' in v_lower or
+            'prosiding nasional' in v_lower or
+            'semnas' in v_lower or
+            'nasional' in i_lower or
+            i_lower == 'prosiding nasional'
+        )
+        if is_intl_conf and not is_explicit_national:
+            return "Seminar Internasional"
+        return "Seminar Nasional"
+
+    # 4. Jurnal Nasional Terakreditasi (SINTA 1-6)
+    if 'sinta' in i_lower:
+        return "Jurnal Nasional Terakreditasi (Sinta)"
+
+    # 5. Jurnal Internasional Bereputasi (Scopus / WoS / Q1-Q4)
+    if any(q in i_lower for q in ['scopus', 'q1', 'q2', 'q3', 'q4', 'wos', 'web of science']):
+        return "Jurnal Internasional Bereputasi (Scopus)"
+
+    # 6. Jurnal Internasional
+    if j_type == 'Internasional' or 'internasional' in i_lower:
+        return "Jurnal Internasional"
+
+    # 7. Jurnal Nasional (Non-akreditasi)
+    return "Jurnal Nasional"
+
+
+
 # ==============================================================================
 # 5. MESIN SCRAPER UTAMA (SELENIUM CORE)
 # ==============================================================================
@@ -892,7 +1021,7 @@ class GoogleScholarScraper:
             desired_order = [
                 'No', 'Judul Publikasi', 'Penulis (Authors)', 'Status Penulis',
                 'Nama Jurnal / Prosiding', 'Publisher', 'Jenis Jurnal', 'Terindeks',
-                'Tanggal Terbit', 'Tahun', 'Vol/No/Hal'
+                'Kategori Publikasi', 'Tanggal Terbit', 'Tahun', 'Vol/No/Hal'
             ]
             for yr in self.target_years:
                 desired_order.append(f'Sitasi {yr}')
@@ -1046,6 +1175,14 @@ class GoogleScholarScraper:
 
         total_range = sum(cites_per_year.get(yr, 0) for yr in self.target_years)
 
+        pub_category = classify_publication_category({
+            'Judul Publikasi': title,
+            'Nama Jurnal / Prosiding': venue_name,
+            'Jenis Jurnal': journal_type,
+            'Terindeks': indexation,
+            'Publisher': publisher_name
+        })
+
         record = {
             'No': len(self.records) + 1,
             'Judul Publikasi': title,
@@ -1055,6 +1192,7 @@ class GoogleScholarScraper:
             'Publisher': publisher_name,
             'Jenis Jurnal': journal_type,
             'Terindeks': indexation,
+            'Kategori Publikasi': pub_category,
             'Tanggal Terbit': pub_date,
             'Tahun': pub_year,
             'Vol/No/Hal': vol_no_hal
@@ -1472,7 +1610,7 @@ class ScrapingJob:
             desired_order = [
                 'No', 'Profil Dosen', 'Judul Publikasi', 'Penulis (Authors)', 'Status Penulis',
                 'Nama Jurnal / Prosiding', 'Publisher', 'Jenis Jurnal', 'Terindeks',
-                'Tanggal Terbit', 'Tahun', 'Vol/No/Hal'
+                'Kategori Publikasi', 'Tanggal Terbit', 'Tahun', 'Vol/No/Hal'
             ]
             for yr in range(self.start_year, self.end_year + 1):
                 desired_order.append(f'Sitasi {yr}')
