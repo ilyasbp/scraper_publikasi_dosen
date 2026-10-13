@@ -14,7 +14,7 @@ import warnings
 import threading
 import subprocess
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Set
+from typing import Optional, Dict, Any, List, Set, Union
 
 import requests
 import pandas as pd
@@ -1361,19 +1361,39 @@ class GoogleScholarScraper:
 # ==============================================================================
 
 class ScrapingJob:
-    """Mengelola thread eksekusi scraper dan sinkronisasi status UI."""
+    """Mengelola thread eksekusi scraper dan sinkronisasi status UI,
+    mendukung scraping profil tunggal maupun batch (banyak ID/URL)."""
 
     def __init__(
         self,
-        author_id: str,
+        author_id: Union[str, List[str]],
         start_year: int = 2023,
         end_year: int = 2026,
         headless: bool = False,
         min_delay: float = 1.5,
         max_delay: float = 3.0,
-        max_pubs: Optional[int] = None
+        max_pubs: Optional[int] = None,
+        merge_results: bool = True
     ):
-        self.author_id = extract_author_id(author_id)
+        if isinstance(author_id, list):
+            raw_ids = [extract_author_id(a) for a in author_id if a and extract_author_id(a)]
+            # Buat unik berurutan
+            seen = set()
+            self.author_ids = []
+            for rid in raw_ids:
+                if rid not in seen:
+                    seen.add(rid)
+                    self.author_ids.append(rid)
+        else:
+            extracted = extract_author_id(author_id)
+            self.author_ids = [extracted] if extracted else []
+
+        self.is_batch = len(self.author_ids) > 1
+        self.merge_results = merge_results
+        self.total_authors = len(self.author_ids)
+        self.current_author_idx = 0
+
+        self.author_id = self.author_ids[0] if self.author_ids else ""
         self.start_year = start_year
         self.end_year = end_year
         self.headless = headless
@@ -1386,6 +1406,7 @@ class ScrapingJob:
         self.clean_first_name = self.author_id
         self.filename = f"scholar_{self.clean_first_name}_{self.start_year}_{self.end_year}.xlsx"
         self.xlsx_file = os.path.join(self.output_dir, self.filename)
+        self.combined_xlsx_file: Optional[str] = None
 
         self.is_running = False
         self.stop_requested = False
@@ -1396,6 +1417,8 @@ class ScrapingJob:
         self.current_title = ""
         self.logs: List[str] = []
         self.records: List[Dict[str, Any]] = []
+        self.batch_results: List[Dict[str, Any]] = []
+        self.active_scraper: Optional[GoogleScholarScraper] = None
         self.error_message: Optional[str] = None
         self.thread: Optional[threading.Thread] = None
 
@@ -1405,40 +1428,179 @@ class ScrapingJob:
         if len(self.logs) > 300:
             self.logs = self.logs[-300:]
 
-    def _on_author_found(self, full_name: str, first_name: str, path: str):
-        self.author_name = full_name
-        self.clean_first_name = first_name
-        self.filename = os.path.basename(path)
-        self.xlsx_file = path
+    def _on_author_found_batch(self, a_idx: int, full_name: str, first_name: str, path: str):
+        if not self.is_batch:
+            self.author_name = full_name
+            self.clean_first_name = first_name
+            self.filename = os.path.basename(path)
+            self.xlsx_file = path
+
+    def _update_progress(self, cur: int, tot: int, title: str):
+        self.current_idx = cur
+        self.total_pubs = tot
+        self.current_title = title
+
+    def _on_current_data_updated(
+        self,
+        a_idx: int,
+        aid: str,
+        current_author_records: List[Dict[str, Any]],
+        all_accumulated: List[Dict[str, Any]]
+    ):
+        if self.is_batch:
+            a_name = getattr(self.active_scraper, 'author_name', aid)
+            cur_labeled = []
+            for r in current_author_records:
+                rc = dict(r)
+                if 'Profil Dosen' not in rc:
+                    rc['Profil Dosen'] = a_name
+                cur_labeled.append(rc)
+            self.records = list(all_accumulated) + cur_labeled
+        else:
+            self.records = list(current_author_records)
+
+    def _create_merged_excel_file(self, all_records: List[Dict[str, Any]]) -> None:
+        """Membuat file Excel gabungan dengan multi-sheet: sheet rekap semua publikasi dan sheet per dosen."""
+        try:
+            os.makedirs(self.output_dir, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            merged_filename = f"scholar_batch_gabungan_{self.start_year}_{self.end_year}_{ts}.xlsx"
+            merged_filepath = os.path.join(self.output_dir, merged_filename)
+
+            df_merged = pd.DataFrame(all_records)
+            cols = list(df_merged.columns)
+            desired_order = [
+                'No', 'Profil Dosen', 'Judul Publikasi', 'Penulis (Authors)', 'Status Penulis',
+                'Nama Jurnal / Prosiding', 'Publisher', 'Jenis Jurnal', 'Terindeks',
+                'Tanggal Terbit', 'Tahun', 'Vol/No/Hal'
+            ]
+            for yr in range(self.start_year, self.end_year + 1):
+                desired_order.append(f'Sitasi {yr}')
+            desired_order.extend(['Total Sitasi Periode', 'Total Sitasi (All)', 'Link Artikel'])
+
+            ordered_cols = [c for c in desired_order if c in cols] + [c for c in cols if c not in desired_order]
+            df_merged = df_merged[ordered_cols]
+            df_merged['No'] = range(1, len(df_merged) + 1)
+
+            with pd.ExcelWriter(merged_filepath, engine='openpyxl') as writer:
+                # Sheet 1: Semua Publikasi Gabungan
+                df_merged.to_excel(writer, sheet_name="Semua Publikasi", index=False)
+
+                # Sheet per dosen
+                seen_sheets = set()
+                for b_info in self.batch_results:
+                    d_name = b_info.get('author_name') or b_info.get('author_id')
+                    d_recs = b_info.get('records', [])
+                    if not d_recs:
+                        continue
+                    d_df = pd.DataFrame(d_recs)
+                    clean_sheet = re.sub(r'[:\\/?*\[\]]', '', str(d_name)).strip()[:28] or f"Dosen_{b_info['index']}"
+                    orig_sheet = clean_sheet
+                    counter = 1
+                    while clean_sheet in seen_sheets:
+                        clean_sheet = f"{orig_sheet[:25]}_{counter}"
+                        counter += 1
+                    seen_sheets.add(clean_sheet)
+
+                    d_df.to_excel(writer, sheet_name=clean_sheet, index=False)
+
+            self.xlsx_file = merged_filepath
+            self.filename = merged_filename
+            self.combined_xlsx_file = merged_filepath
+            self.author_name = f"Gabungan {len(self.batch_results)} Dosen"
+            self.records = df_merged.to_dict('records')
+            self.add_log(f"Berkas gabungan tersimpan: {merged_filename} (memuat sheet 'Semua Publikasi' & sheet per dosen).")
+        except Exception as ex:
+            self.add_log(f"Peringatan: Gagal membuat berkas Excel gabungan: {ex}")
 
     def _worker(self):
         self.is_running = True
         self.stop_requested = False
-        self.status = "Menghubungkan ke browser..."
-        self.add_log(f"Memulai scraper untuk Author ID: {self.author_id} (Tahun {self.start_year}-{self.end_year})")
+        self.batch_results = []
+        self.records = []
+        all_accumulated_records = []
+
+        total_authors = len(self.author_ids)
+        if total_authors == 0:
+            self.status = "Tidak ada ID author valid yang diberikan."
+            self.is_running = False
+            return
+
+        self.add_log(f"Memulai tugas scraping ({total_authors} profil dosen, Periode {self.start_year}-{self.end_year}).")
 
         try:
-            scraper = GoogleScholarScraper(
-                author_id=self.author_id,
-                start_year=self.start_year,
-                end_year=self.end_year,
-                headless=self.headless,
-                min_delay=self.min_delay,
-                max_delay=self.max_delay,
-                max_pubs=self.max_pubs,
-                on_log=self.add_log,
-                on_progress=lambda cur, tot, title: self._update_progress(cur, tot, title),
-                on_status=lambda s: setattr(self, 'status', s),
-                on_captcha=lambda c: setattr(self, 'is_captcha', c),
-                on_data_updated=lambda r: setattr(self, 'records', r),
-                on_author_found=self._on_author_found,
-                stop_check=lambda: self.stop_requested
-            )
-            self.records = scraper.run()
-            self.xlsx_file = scraper.xlsx_file
-            self.filename = scraper.filename
-            self.author_name = scraper.author_name
-            self.clean_first_name = scraper.clean_first_name
+            for a_idx, aid in enumerate(self.author_ids, 1):
+                if self.stop_requested:
+                    break
+
+                self.current_author_idx = a_idx
+                self.author_id = aid
+                self.current_idx = 0
+                self.total_pubs = 0
+                self.current_title = ""
+
+                tag_prefix = f"[Dosen {a_idx}/{total_authors}] " if self.is_batch else ""
+                self.status = f"{tag_prefix}Menghubungkan ke profil Google Scholar ({aid})..."
+                self.add_log(f"{tag_prefix}Memulai proses untuk Author ID: {aid}")
+
+                scraper = GoogleScholarScraper(
+                    author_id=aid,
+                    start_year=self.start_year,
+                    end_year=self.end_year,
+                    headless=self.headless,
+                    min_delay=self.min_delay,
+                    max_delay=self.max_delay,
+                    max_pubs=self.max_pubs,
+                    on_log=lambda m: self.add_log(f"{tag_prefix}{m}"),
+                    on_progress=lambda cur, tot, title: self._update_progress(cur, tot, title),
+                    on_status=lambda s: setattr(self, 'status', f"{tag_prefix}{s}"),
+                    on_captcha=lambda c: setattr(self, 'is_captcha', c),
+                    on_data_updated=lambda r: self._on_current_data_updated(a_idx, aid, r, all_accumulated_records),
+                    on_author_found=lambda full, first, path: self._on_author_found_batch(a_idx, full, first, path),
+                    stop_check=lambda: self.stop_requested
+                )
+                self.active_scraper = scraper
+                author_records = scraper.run()
+                self.active_scraper = None
+
+                author_info = {
+                    'index': a_idx,
+                    'author_id': aid,
+                    'author_name': scraper.author_name,
+                    'clean_first_name': scraper.clean_first_name,
+                    'total_pubs': len(author_records),
+                    'xlsx_file': scraper.xlsx_file,
+                    'filename': scraper.filename,
+                    'records': list(author_records)
+                }
+                self.batch_results.append(author_info)
+
+                labeled_records = []
+                for rec in author_records:
+                    rec_copy = dict(rec)
+                    if 'Profil Dosen' not in rec_copy:
+                        rec_copy['Profil Dosen'] = scraper.author_name
+                    labeled_records.append(rec_copy)
+                all_accumulated_records.extend(labeled_records)
+
+                if self.is_batch:
+                    self.records = list(all_accumulated_records)
+                else:
+                    self.records = list(author_records)
+                    self.xlsx_file = scraper.xlsx_file
+                    self.filename = scraper.filename
+                    self.author_name = scraper.author_name
+                    self.clean_first_name = scraper.clean_first_name
+
+                self.add_log(f"{tag_prefix}Selesai: {len(author_records)} publikasi dari {scraper.author_name} berhasil direkap.")
+
+                if self.stop_requested:
+                    break
+
+            # Jika batch dan merge_results, buat file gabungan
+            if self.is_batch and self.merge_results and all_accumulated_records:
+                self._create_merged_excel_file(all_accumulated_records)
+
         except Exception as e:
             self.error_message = str(e)
             self.add_log(f"Error tidak terduga: {e}")
@@ -1446,15 +1608,19 @@ class ScrapingJob:
         finally:
             self.is_running = False
             self.is_captcha = False
+            self.active_scraper = None
             if self.stop_requested:
-                self.status = "Proses dihentikan oleh pengguna."
+                self.status = "Proses dihentikan oleh pengguna. Data yang telah diproses tersimpan."
             else:
-                self.status = f"Selesai! {len(self.records)} publikasi tersimpan di {self.filename}."
-
-    def _update_progress(self, cur: int, tot: int, title: str):
-        self.current_idx = cur
-        self.total_pubs = tot
-        self.current_title = title
+                if self.is_batch:
+                    done_count = len(self.batch_results)
+                    total_p = len(self.records)
+                    if self.merge_results and getattr(self, 'combined_xlsx_file', None):
+                        self.status = f"Selesai! {done_count} dosen ({total_p} publikasi) berhasil digabung di {self.filename}."
+                    else:
+                        self.status = f"Selesai! {done_count} dosen ({total_p} publikasi) tersimpan di berkas masing-masing."
+                else:
+                    self.status = f"Selesai! {len(self.records)} publikasi tersimpan di {self.filename}."
 
     def start(self):
         if self.is_running:

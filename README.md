@@ -10,10 +10,11 @@ Aplikasi web berbasis **Streamlit** dan **Selenium** untuk mengekstrak data prof
 
 1. **Ekstraksi Data Publikasi:**
    - Input Author ID atau URL profil Google Scholar.
+   - **Batch ID Scraping**: Menambahkan banyak ID / URL dosen sekaligus dengan tombol `+ Tambah ID / URL`, dilengkapi pilihan hasil berkas **Dijadikan Satu** (master Excel multi-sheet) atau **Tetap Terpisah** (berkas mandiri per profil / unduh ZIP).
    - Penentuan rentang tahun publikasi dan sitasi.
-   - Opsi batas jumlah publikasi untuk pengujian cepat.
-   - Pemantauan progres, metrik artikel dan sitasi, serta log aktivitas.
-   - Tombol Mulai/Berhenti untuk mengontrol proses.
+   - Opsi batas jumlah publikasi per profil untuk pengujian cepat.
+   - Pemantauan progres berjenjang, metrik artikel dan sitasi, serta log aktivitas.
+   - Tombol Mulai/Berhenti (*single-click stop*) untuk mengontrol proses dengan aman.
 
 2. **Klasifikasi Akreditasi & Indeksasi:**
    - **Database SCImagoJR**: Kuartil Scopus (Q1–Q4 dan prosiding) dicocokkan secara lokal.

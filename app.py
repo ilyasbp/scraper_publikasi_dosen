@@ -5,8 +5,10 @@ Antarmuka Web Streamlit untuk Scraper & Analisis Publikasi Dosen (Google Scholar
 Desain modern, minimalis, palet warna hijau emerald, tanpa sidebar, dan tanpa emotikon.
 """
 
+import io
 import os
 import re
+import zipfile
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -184,7 +186,10 @@ def init_session_state() -> None:
         'job': None,
         'selected_history_df': None,
         'active_dataset_name': "",
-        'job_was_running': False
+        'job_was_running': False,
+        'author_items': [{'id': 0, 'value': "K_X8HzoAAAAJ"}],
+        'next_author_id': 1,
+        'batch_merge_mode': "Dijadikan Satu (1 Berkas Excel Gabungan)"
     }
     for key, default_val in defaults.items():
         if key not in st.session_state:
@@ -203,13 +208,71 @@ def render_scraper_tab() -> None:
 
     # Form Input
     with st.container():
-        input_author = st.text_input(
-            "ID Author atau URL Google Scholar",
-            value="K_X8HzoAAAAJ",
-            placeholder="Contoh: K_X8HzoAAAAJ atau link profil",
-            help="Masukkan ID author atau URL profil lengkap Google Scholar.",
-            disabled=is_running
-        )
+        st.markdown("<label style='font-size: 0.95rem; font-weight: 600; color: #1E293B; margin-bottom: 6px; display: inline-block;'>ID Author atau URL Google Scholar</label>", unsafe_allow_html=True)
+
+        if not st.session_state.get('author_items'):
+            st.session_state.author_items = [{'id': 0, 'value': "K_X8HzoAAAAJ"}]
+            st.session_state.next_author_id = 1
+
+        is_multiple = len(st.session_state.author_items) > 1
+
+        for i, item in enumerate(st.session_state.author_items):
+            if is_multiple:
+                c_num, c_field, c_del = st.columns([0.6, 8.4, 1.0])
+                with c_num:
+                    st.markdown(f"<div style='padding-top: 10px; font-weight: 600; color: #065F46;'>#{i+1}</div>", unsafe_allow_html=True)
+                with c_field:
+                    val = st.text_input(
+                        f"ID Author / URL #{i+1}",
+                        value=item.get('value', ''),
+                        key=f"author_input_{item['id']}",
+                        placeholder=f"Contoh ID atau URL profil dosen ke-{i+1}...",
+                        disabled=is_running,
+                        label_visibility="collapsed"
+                    )
+                    item['value'] = val
+                with c_del:
+                    if st.button("✕", key=f"btn_del_{item['id']}", disabled=is_running, help=f"Hapus slot dosen #{i+1}"):
+                        st.session_state.author_items = [it for it in st.session_state.author_items if it['id'] != item['id']]
+                        if not st.session_state.author_items:
+                            st.session_state.author_items = [{'id': st.session_state.next_author_id, 'value': ''}]
+                            st.session_state.next_author_id += 1
+                        st.rerun()
+            else:
+                val = st.text_input(
+                    "ID Author atau URL Google Scholar",
+                    value=item.get('value', ''),
+                    key=f"author_input_{item['id']}",
+                    placeholder="Contoh: K_X8HzoAAAAJ atau link profil",
+                    help="Masukkan ID author atau URL profil lengkap Google Scholar.",
+                    disabled=is_running,
+                    label_visibility="collapsed"
+                )
+                item['value'] = val
+
+        # Tombol Tambah ID & Opsi Penggabungan
+        col_btn_add, col_merge = st.columns([1.5, 3.5])
+        with col_btn_add:
+            if st.button("+ Tambah ID / URL", disabled=is_running, help="Tambah slot profil dosen lain untuk scraping batch"):
+                st.session_state.author_items.append({'id': st.session_state.next_author_id, 'value': ''})
+                st.session_state.next_author_id += 1
+                st.rerun()
+
+        with col_merge:
+            if is_multiple:
+                st.radio(
+                    "Hasil Scraping Batch:",
+                    options=[
+                        "Dijadikan Satu (1 Berkas Excel Gabungan)",
+                        "Tetap Terpisah (Berkas Excel Mandiri per Dosen)"
+                    ],
+                    key="batch_merge_mode",
+                    horizontal=True,
+                    disabled=is_running,
+                    help="Pilih apakah seluruh publikasi dosen digabung dalam satu file Excel atau disimpan terpisah per profil."
+                )
+
+        st.markdown("<div style='margin-bottom: 0.6rem;'></div>", unsafe_allow_html=True)
 
         col_y1, col_y2, col_lim = st.columns(3)
         with col_y1:
@@ -228,12 +291,12 @@ def render_scraper_tab() -> None:
             end_year = st.number_input("Tahun Akhir", min_value=1990, max_value=2030, value=2026, step=1, disabled=is_running)
         with col_lim:
             max_pubs = st.number_input(
-                "Batas Artikel (0 = Semua)",
+                "Batas Artikel per Dosen (0 = Semua)",
                 min_value=0,
                 max_value=5000,
                 value=0,
                 step=5,
-                help="Isi angka (misal 5 atau 10) untuk pengujian cepat.",
+                help="Isi angka (misal 5 atau 10) untuk pengujian cepat per profil dosen.",
                 disabled=is_running
             )
 
@@ -246,29 +309,47 @@ def render_scraper_tab() -> None:
 
     # Tombol Aksi Tunggal (Mulai / Berhenti)
     if not is_running:
-        if st.button("Mulai", type="primary", use_container_width=True):
+        active_inputs = [it.get('value', '').strip() for it in st.session_state.author_items if it.get('value', '').strip()]
+        btn_label = f"Mulai Scraping Batch ({len(active_inputs)} Dosen)" if len(active_inputs) > 1 else "Mulai"
+        if st.button(btn_label, type="primary", use_container_width=True):
             if start_year > end_year:
                 st.error("Tahun mulai tidak boleh lebih besar dari tahun akhir.")
             else:
-                # Pastikan job sebelumnya berhenti sepenuhnya jika masih ada
-                if job and job.thread and job.thread.is_alive():
-                    job.stop(wait=True, timeout=2.5)
-                    job.is_running = False
+                gathered_ids = []
+                for it in st.session_state.author_items:
+                    raw_val = it.get('value', '').strip()
+                    if not raw_val:
+                        continue
+                    for token in raw_val.replace(',', '\n').split('\n'):
+                        clean = token.strip()
+                        if clean:
+                            aid = extract_author_id(clean)
+                            if aid and aid not in gathered_ids:
+                                gathered_ids.append(aid)
 
-                extracted_id = extract_author_id(input_author)
-                new_job = ScrapingJob(
-                    author_id=extracted_id,
-                    start_year=int(start_year),
-                    end_year=int(end_year),
-                    headless=False,
-                    min_delay=min_delay,
-                    max_delay=max_delay,
-                    max_pubs=int(max_pubs) if max_pubs > 0 else None
-                )
-                st.session_state.job = new_job
-                st.session_state.job_was_running = True
-                new_job.start()
-                st.rerun()
+                if not gathered_ids:
+                    st.error("Silakan masukkan minimal 1 ID Author atau URL Google Scholar yang valid.")
+                else:
+                    # Pastikan job sebelumnya berhenti sepenuhnya jika masih ada
+                    if job and job.thread and job.thread.is_alive():
+                        job.stop(wait=True, timeout=2.5)
+                        job.is_running = False
+
+                    is_merge = st.session_state.get('batch_merge_mode', '').startswith("Dijadikan Satu")
+                    new_job = ScrapingJob(
+                        author_id=gathered_ids if len(gathered_ids) > 1 else gathered_ids[0],
+                        start_year=int(start_year),
+                        end_year=int(end_year),
+                        headless=False,
+                        min_delay=min_delay,
+                        max_delay=max_delay,
+                        max_pubs=int(max_pubs) if max_pubs > 0 else None,
+                        merge_results=is_merge
+                    )
+                    st.session_state.job = new_job
+                    st.session_state.job_was_running = True
+                    new_job.start()
+                    st.rerun()
     else:
         if st.button("Berhenti", type="secondary", use_container_width=True):
             if job:
@@ -304,6 +385,9 @@ def render_scraper_tab() -> None:
             </div>
             """, unsafe_allow_html=True)
 
+        is_batch = getattr(current_job, 'is_batch', False)
+        merge_mode = getattr(current_job, 'merge_results', False)
+
         # Kartu Metrik Ringkas
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         with col_m1:
@@ -315,7 +399,10 @@ def render_scraper_tab() -> None:
                 status_text = "Selesai"
             st.metric("Status", status_text)
         with col_m2:
-            st.metric("Artikel Diproses", f"{current_job.current_idx} / {current_job.total_pubs or '-'}")
+            if is_batch:
+                st.metric("Dosen Diproses", f"{current_job.current_author_idx} / {current_job.total_authors}")
+            else:
+                st.metric("Artikel Diproses", f"{current_job.current_idx} / {current_job.total_pubs or '-'}")
         with col_m3:
             st.metric("Data Tersimpan", len(current_job.records))
         with col_m4:
@@ -327,7 +414,15 @@ def render_scraper_tab() -> None:
             st.metric(f"Sitasi ({current_job.start_year}–{current_job.end_year})", total_range_cites)
 
         # Indikator Progres
-        if current_job.total_pubs > 0:
+        if is_batch and current_job.total_authors > 0:
+            a_done = max(0, current_job.current_author_idx - 1)
+            pub_pct = (current_job.current_idx / max(1, current_job.total_pubs)) if current_job.total_pubs > 0 else 0
+            total_pct = min(1.0, max(0.0, (a_done + pub_pct) / current_job.total_authors))
+            curr_author_tag = getattr(current_job.active_scraper, 'author_name', current_job.author_id)
+            title_snippet = f" — {current_job.current_title[:38]}..." if current_job.current_title else ""
+            bar_text = f"{int(total_pct * 100)}% — Dosen {current_job.current_author_idx}/{current_job.total_authors} ({curr_author_tag}) | Artikel {current_job.current_idx}/{current_job.total_pubs or '-'}{title_snippet}"
+            st.progress(total_pct, text=bar_text)
+        elif current_job.total_pubs > 0:
             pct = min(1.0, current_job.current_idx / current_job.total_pubs)
             title_text = f" — {current_job.current_title[:55]}..." if current_job.current_title else ""
             st.progress(pct, text=f"{int(pct * 100)}% ({current_job.current_idx}/{current_job.total_pubs}){title_text}")
@@ -341,18 +436,105 @@ def render_scraper_tab() -> None:
 
         # Preview Data & Aksi Berkas
         if current_job.records:
-            author_display = getattr(current_job, 'author_name', current_job.author_id)
-            filename_display = getattr(current_job, 'filename', f"scholar_{current_job.author_id}.xlsx")
-            file_path_display = getattr(current_job, 'xlsx_file', f"{OUTPUT_DIR}/{filename_display}")
+            if is_batch and not merge_mode:
+                # Mode Tetap Terpisah
+                st.markdown(f"#### Hasil Scraping Batch ({len(current_job.batch_results)} Dosen — Berkas Terpisah)")
+                summary_data = []
+                for b in current_job.batch_results:
+                    summary_data.append({
+                        'No': b['index'],
+                        'Nama Dosen': b['author_name'],
+                        'ID Scholar': b['author_id'],
+                        'Jumlah Artikel': b['total_pubs'],
+                        'Nama Berkas': b['filename']
+                    })
+                if summary_data:
+                    st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
 
-            st.markdown(f"#### Data Publikasi: {author_display}")
-            st.caption(f"Lokasi berkas: `{file_path_display}`")
-            df = pd.DataFrame(current_job.records)
-            st.dataframe(df, use_container_width=True, height=320, hide_index=True)
+                if current_job.batch_results:
+                    author_names = [b['author_name'] for b in current_job.batch_results]
+                    sel_author = st.selectbox("Pilih Dosen untuk Pratinjau Publikasi:", options=author_names)
+                    sel_item = next((b for b in current_job.batch_results if b['author_name'] == sel_author), None)
+                    if sel_item and sel_item.get('records'):
+                        st.caption(f"Lokasi berkas: `{sel_item.get('xlsx_file')}`")
+                        st.dataframe(pd.DataFrame(sel_item['records']), use_container_width=True, height=280, hide_index=True)
 
-            if st.button("Buka Hasil", type="primary", use_container_width=True, help="Buka folder hasil_scraping langsung di komputer Anda"):
-                open_output_folder(OUTPUT_DIR)
-                st.toast("Folder 'hasil_scraping' telah dibuka.")
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    valid_files = [b['xlsx_file'] for b in current_job.batch_results if b.get('xlsx_file') and os.path.exists(b['xlsx_file'])]
+                    if valid_files:
+                        zip_buf = io.BytesIO()
+                        with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                            for vf in valid_files:
+                                zf.write(vf, arcname=os.path.basename(vf))
+                        zip_buf.seek(0)
+                        st.download_button(
+                            label=f"Unduh Semua Berkas ({len(valid_files)} Berkas ZIP)",
+                            data=zip_buf,
+                            file_name=f"scholar_batch_{current_job.start_year}_{current_job.end_year}.zip",
+                            mime="application/zip",
+                            type="primary",
+                            use_container_width=True
+                        )
+                with col_d2:
+                    if st.button("Buka Hasil", key="btn_open_batch_sep", use_container_width=True):
+                        open_output_folder(OUTPUT_DIR)
+                        st.toast("Folder 'hasil_scraping' telah dibuka.")
+
+            elif is_batch and merge_mode:
+                # Mode Dijadikan Satu
+                file_path_display = getattr(current_job, 'xlsx_file', f"{OUTPUT_DIR}/{current_job.filename}")
+                st.markdown(f"#### Data Publikasi Gabungan ({len(current_job.batch_results)} Dosen, {len(current_job.records)} Artikel)")
+                st.caption(f"Lokasi berkas gabungan: `{file_path_display}`")
+                df = pd.DataFrame(current_job.records)
+                st.dataframe(df, use_container_width=True, height=320, hide_index=True)
+
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    if os.path.exists(file_path_display):
+                        with open(file_path_display, 'rb') as f_in:
+                            excel_bytes = f_in.read()
+                        st.download_button(
+                            label="Unduh Berkas Gabungan (.xlsx)",
+                            data=excel_bytes,
+                            file_name=os.path.basename(file_path_display),
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            type="primary",
+                            use_container_width=True
+                        )
+                with col_d2:
+                    if st.button("Buka Hasil", key="btn_open_batch_merged", use_container_width=True):
+                        open_output_folder(OUTPUT_DIR)
+                        st.toast("Folder 'hasil_scraping' telah dibuka.")
+
+            else:
+                # Mode Profil Tunggal
+                author_display = getattr(current_job, 'author_name', current_job.author_id)
+                filename_display = getattr(current_job, 'filename', f"scholar_{current_job.author_id}.xlsx")
+                file_path_display = getattr(current_job, 'xlsx_file', f"{OUTPUT_DIR}/{filename_display}")
+
+                st.markdown(f"#### Data Publikasi: {author_display}")
+                st.caption(f"Lokasi berkas: `{file_path_display}`")
+                df = pd.DataFrame(current_job.records)
+                st.dataframe(df, use_container_width=True, height=320, hide_index=True)
+
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    if os.path.exists(file_path_display):
+                        with open(file_path_display, 'rb') as f_in:
+                            excel_bytes = f_in.read()
+                        st.download_button(
+                            label="Unduh Berkas Excel (.xlsx)",
+                            data=excel_bytes,
+                            file_name=filename_display,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            type="primary",
+                            use_container_width=True
+                        )
+                with col_d2:
+                    if st.button("Buka Hasil", key="btn_open_single", use_container_width=True):
+                        open_output_folder(OUTPUT_DIR)
+                        st.toast("Folder 'hasil_scraping' telah dibuka.")
 
     render_live_monitor()
 
@@ -370,7 +552,11 @@ def render_analytics_tab() -> None:
 
     if st.session_state.job and st.session_state.job.records:
         analytics_df = pd.DataFrame(st.session_state.job.records)
-        analytics_source_name = f"Sesi Aktif ({st.session_state.job.author_id})"
+        if getattr(st.session_state.job, 'is_batch', False):
+            done_count = len(st.session_state.job.batch_results) or st.session_state.job.total_authors
+            analytics_source_name = f"Sesi Batch ({done_count} Dosen)"
+        else:
+            analytics_source_name = f"Sesi Aktif ({st.session_state.job.author_id})"
     elif st.session_state.selected_history_df is not None:
         analytics_df = st.session_state.selected_history_df
         analytics_source_name = st.session_state.active_dataset_name
@@ -378,6 +564,14 @@ def render_analytics_tab() -> None:
     if analytics_df is None or analytics_df.empty:
         st.info("Belum ada data untuk dianalisis. Silakan mulai proses di tab Publikasi atau pilih berkas di tab Riwayat Berkas.")
         return
+
+    # Filter Dosen jika data batch / memuat beberapa dosen
+    if 'Profil Dosen' in analytics_df.columns and analytics_df['Profil Dosen'].nunique() > 1:
+        dosen_opts = ["Semua Dosen (Gabungan)"] + sorted(list(analytics_df['Profil Dosen'].dropna().unique()))
+        selected_dosen_filter = st.selectbox("Pilih Dosen untuk Analisis:", options=dosen_opts)
+        if selected_dosen_filter != "Semua Dosen (Gabungan)":
+            analytics_df = analytics_df[analytics_df['Profil Dosen'] == selected_dosen_filter]
+            analytics_source_name = f"{analytics_source_name} — {selected_dosen_filter}"
 
     st.caption(f"Sumber: {analytics_source_name} ({len(analytics_df)} publikasi)")
 
