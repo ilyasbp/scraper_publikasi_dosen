@@ -426,7 +426,7 @@ def standardize_author_name(name: str) -> str:
 
 
 def clean_doi(doi_str: str) -> str:
-    """Membersihkan format DOI dan memastikan representasi standar 10.xxxx/..."""
+    """Membersihkan format DOI dan memastikan representasi standar URL https://doi.org/10.xxxx/..."""
     if not doi_str:
         return "-"
     cleaned = re.sub(r'^(https?://(dx\.)?doi\.org/|doi:\s*|doi/)+', '', str(doi_str).strip(), flags=re.IGNORECASE)
@@ -434,7 +434,7 @@ def clean_doi(doi_str: str) -> str:
     if m:
         doi = m.group(1)
         doi = re.sub(r'[\.,;:\)\]>]+$', '', doi)
-        return doi
+        return f"https://doi.org/{doi}"
     return "-"
 
 

@@ -5,6 +5,7 @@ Antarmuka Web Streamlit untuk Scraper & Analisis Publikasi Dosen (Google Scholar
 Desain modern, minimalis, palet warna hijau emerald, tanpa sidebar, dan tanpa emotikon.
 """
 
+import html
 import io
 import os
 import re
@@ -23,7 +24,8 @@ from scraper_engine import (
     open_output_folder,
     PUBLICATION_CATEGORIES,
     classify_publication_category,
-    standardize_author_name
+    standardize_author_name,
+    clean_doi
 )
 
 # ==============================================================================
@@ -414,8 +416,57 @@ def render_scraper_tab() -> None:
 
         # Log Aktivitas
         with st.expander(f"Log Aktivitas ({len(current_job.logs)})", expanded=bool(current_job.is_running and not current_job.stop_requested)):
-            log_text = "\n".join(current_job.logs[-50:]) if current_job.logs else "Belum ada aktivitas tercatat."
-            st.text_area("Console", value=log_text, height=160, disabled=True, label_visibility="collapsed")
+            recent_logs = current_job.logs[-80:] if current_job.logs else ["Belum ada aktivitas tercatat."]
+            escaped_log = html.escape("\n".join(recent_logs))
+            console_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body {{
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+  }}
+  #log-console {{
+    height: 160px;
+    box-sizing: border-box;
+    overflow-y: auto;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11.5px;
+    line-height: 1.5;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }}
+  #log-console::-webkit-scrollbar {{
+    width: 6px;
+  }}
+  #log-console::-webkit-scrollbar-track {{
+    background: #1e293b;
+  }}
+  #log-console::-webkit-scrollbar-thumb {{
+    background: #475569;
+    border-radius: 3px;
+  }}
+</style>
+</head>
+<body>
+  <div id="log-console">{escaped_log}</div>
+  <script>
+    const el = document.getElementById('log-console');
+    if (el) {{
+      el.scrollTop = el.scrollHeight;
+    }}
+  </script>
+</body>
+</html>"""
+            st.components.v1.html(console_html, height=170)
 
         # Preview Data & Aksi Berkas
         if current_job.records:
@@ -649,7 +700,9 @@ def render_analytics_tab() -> None:
                         raw_base = f_info['filename'].replace('scholar_', '').replace('.xlsx', '')
                         author_guess = s_name if len(xl.sheet_names) > 1 else raw_base.split('_')[0]
                         df_sub['Profil Dosen'] = standardize_author_name(author_guess)
-                    if 'DOI' not in df_sub.columns:
+                    if 'DOI' in df_sub.columns and not df_sub['DOI'].isnull().all():
+                        df_sub['DOI'] = df_sub['DOI'].apply(lambda x: clean_doi(str(x)) if pd.notna(x) and str(x).strip() not in ['', '-'] else '-')
+                    else:
                         df_sub['DOI'] = '-'
                     df_sub['Sumber Berkas'] = f_info['filename']
                     dfs.append(df_sub)
