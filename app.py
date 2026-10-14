@@ -22,7 +22,8 @@ from scraper_engine import (
     OUTPUT_DIR,
     open_output_folder,
     PUBLICATION_CATEGORIES,
-    classify_publication_category
+    classify_publication_category,
+    standardize_author_name
 )
 
 # ==============================================================================
@@ -642,10 +643,14 @@ def render_analytics_tab() -> None:
             for s_name in xl.sheet_names:
                 df_sub = pd.read_excel(f_path, sheet_name=s_name)
                 if df_sub is not None and not df_sub.empty:
-                    if 'Profil Dosen' not in df_sub.columns or df_sub['Profil Dosen'].isnull().all():
+                    if 'Profil Dosen' in df_sub.columns and not df_sub['Profil Dosen'].isnull().all():
+                        df_sub['Profil Dosen'] = df_sub['Profil Dosen'].apply(lambda x: standardize_author_name(str(x)) if pd.notna(x) else '-')
+                    else:
                         raw_base = f_info['filename'].replace('scholar_', '').replace('.xlsx', '')
-                        author_guess = s_name if len(xl.sheet_names) > 1 else raw_base.split('_')[0].capitalize()
-                        df_sub['Profil Dosen'] = author_guess
+                        author_guess = s_name if len(xl.sheet_names) > 1 else raw_base.split('_')[0]
+                        df_sub['Profil Dosen'] = standardize_author_name(author_guess)
+                    if 'DOI' not in df_sub.columns:
+                        df_sub['DOI'] = '-'
                     df_sub['Sumber Berkas'] = f_info['filename']
                     dfs.append(df_sub)
         except Exception as ex:
@@ -668,7 +673,7 @@ def render_analytics_tab() -> None:
         sitasi_cols = [c for c in raw_df.columns if re.match(r'^Sitasi\s+\d{4}$', c)]
         sitasi_cols = sorted(sitasi_cols, key=lambda x: int(re.search(r'\d{4}', x).group(0)))
         desired_order.extend(sitasi_cols)
-        desired_order.extend(['Total Sitasi Periode', 'Total Sitasi (All)', 'Link Artikel'])
+        desired_order.extend(['Total Sitasi Periode', 'Total Sitasi (All)', 'Link Artikel', 'DOI'])
 
         export_df = raw_df.copy()
         ordered_cols = [c for c in desired_order if c in export_df.columns] + [c for c in export_df.columns if c not in desired_order and c != 'Sumber Berkas']

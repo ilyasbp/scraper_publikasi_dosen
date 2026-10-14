@@ -37,7 +37,7 @@ Aplikasi web berbasis **Streamlit** dan **Selenium** untuk mengekstrak data prof
    - Berkas otomatis tersimpan di folder `hasil_scraping/` dalam format `.xlsx`.
    - Penamaan berkas otomatis menggunakan huruf kecil berdasarkan nama author dan rentang tahun (contoh: `budi_2023_2026.xlsx`).
    - Struktur kolom:
-     `No` | `Judul Publikasi` | `Penulis (Authors)` | `Status Penulis` | `Nama Jurnal / Prosiding` | `Publisher` | `Jenis Jurnal` | `Terindeks` | `Tanggal Terbit` | `Tahun` | `Vol/No/Hal` | `Sitasi [Tahun]...` | `Total Sitasi Periode` | `Total Sitasi (All)` | `Link Artikel`
+     `No` | `Profil Dosen` | `Judul Publikasi` | `Penulis (Authors)` | `Status Penulis` | `Nama Jurnal / Prosiding` | `Publisher` | `Jenis Jurnal` | `Terindeks` | `Kategori Publikasi` | `Tanggal Terbit` | `Tahun` | `Vol/No/Hal` | `Sitasi [Tahun]...` | `Total Sitasi Periode` | `Total Sitasi (All)` | `Link Artikel` | `DOI`
 
 6. **Fitur Resume (Checkpoint):**
    - Jika proses terhenti, menjalankan ulang untuk author dan tahun yang sama akan otomatis melanjutkan dari artikel yang belum tersimpan.

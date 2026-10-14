@@ -344,6 +344,137 @@ def extract_first_name(full_name: str) -> str:
     return words[0] if words else ""
 
 
+def standardize_author_name(name: str) -> str:
+    """
+    Standarisasi penulisan nama profil author/dosen dari Google Scholar menjadi Title Case yang rapi.
+    Contoh:
+      - 'AGUS MIFTAKUS SURUR' -> 'Agus Miftakus Surur'
+      - 'agus miftakus surur' -> 'Agus Miftakus Surur'
+      - 'DR. AGUS MIFTAKUS SURUR, M.PD.' -> 'Dr. Agus Miftakus Surur, M.Pd.'
+    """
+    if not name or not str(name).strip():
+        return "-"
+    raw = re.sub(r'[\u202a-\u202e]', '', str(name)).strip()
+    raw = re.sub(r'\s+', ' ', raw)
+    if not raw:
+        return "-"
+
+    # Kamus umum gelar agar kapitalisasi gelar akademik Indonesia/Internasional tepat
+    known_titles = {
+        'dr': 'Dr.', 'dr.': 'Dr.', 'prof': 'Prof.', 'prof.': 'Prof.',
+        'ir': 'Ir.', 'ir.': 'Ir.', 'drs': 'Drs.', 'drs.': 'Drs.',
+        'dra': 'Dra.', 'dra.': 'Dra.', 'ph.d': 'Ph.D.', 'phd': 'Ph.D.',
+        'ph.d.': 'Ph.D.', 'm.sc': 'M.Sc.', 'msc': 'M.Sc.', 'm.sc.': 'M.Sc.',
+        'b.sc': 'B.Sc.', 'bsc': 'B.Sc.', 'm.pd': 'M.Pd.', 'mpd': 'M.Pd.',
+        'm.pd.': 'M.Pd.', 's.pd': 'S.Pd.', 'spd': 'S.Pd.', 's.pd.': 'S.Pd.',
+        'm.kom': 'M.Kom.', 'mkom': 'M.Kom.', 'm.kom.': 'M.Kom.',
+        's.kom': 'S.Kom.', 'skom': 'S.Kom.', 's.kom.': 'S.Kom.',
+        'm.t': 'M.T.', 'mt': 'M.T.', 'm.t.': 'M.T.', 's.t': 'S.T.',
+        'st': 'S.T.', 's.t.': 'S.T.', 's.si': 'S.Si.', 'ssi': 'S.Si.',
+        's.si.': 'S.Si.', 'm.si': 'M.Si.', 'msi': 'M.Si.', 'm.si.': 'M.Si.',
+        's.e': 'S.E.', 'se': 'S.E.', 's.e.': 'S.E.', 'm.m': 'M.M.',
+        'mm': 'M.M.', 'm.m.': 'M.M.', 's.h': 'S.H.', 'sh': 'S.H.',
+        's.h.': 'S.H.', 'm.h': 'M.H.', 'mh': 'M.H.', 'm.h.': 'M.H.',
+        's.sos': 'S.Sos.', 's.sos.': 'S.Sos.', 'm.sos': 'M.Sos.', 'm.sos.': 'M.Sos.',
+        's.ked': 'S.Ked.', 'm.kes': 'M.Kes.', 'h.': 'H.', 'hj.': 'Hj.',
+    }
+
+    words = raw.split(' ')
+    standardized_words = []
+    for w in words:
+        if not w:
+            continue
+        prefix, suffix = '', ''
+        m_start = re.match(r'^([^a-zA-Z0-9]+)', w)
+        if m_start:
+            prefix = m_start.group(1)
+            w = w[len(prefix):]
+        m_end = re.search(r'([^a-zA-Z0-9]+)$', w)
+        if m_end:
+            suffix = m_end.group(1)
+            w = w[:-len(suffix)]
+
+        if not w:
+            standardized_words.append(prefix + suffix)
+            continue
+
+        w_lower = w.lower()
+        if w_lower in known_titles:
+            title_formatted = known_titles[w_lower]
+            if title_formatted.endswith('.') and suffix.startswith('.'):
+                suffix = suffix[1:]
+            standardized_words.append(prefix + title_formatted + suffix)
+            continue
+
+        if '.' in w:
+            parts = [p.capitalize() for p in w.split('.')]
+            clean_w = '.'.join(parts)
+        elif '-' in w:
+            parts = [p.capitalize() for p in w.split('-')]
+            clean_w = '-'.join(parts)
+        elif "'" in w:
+            parts = [p.capitalize() for p in w.split("'")]
+            clean_w = "'".join(parts)
+        else:
+            clean_w = w.capitalize()
+
+        standardized_words.append(prefix + clean_w + suffix)
+
+    result = ' '.join(standardized_words).strip()
+    return result if result else "-"
+
+
+def clean_doi(doi_str: str) -> str:
+    """Membersihkan format DOI dan memastikan representasi standar 10.xxxx/..."""
+    if not doi_str:
+        return "-"
+    cleaned = re.sub(r'^(https?://(dx\.)?doi\.org/|doi:\s*|doi/)+', '', str(doi_str).strip(), flags=re.IGNORECASE)
+    m = re.search(r'(10\.\d{4,9}/[^\s"\'<>]+)', cleaned)
+    if m:
+        doi = m.group(1)
+        doi = re.sub(r'[\.,;:\)\]>]+$', '', doi)
+        return doi
+    return "-"
+
+
+def extract_doi(fields_dict: Optional[Dict[str, str]] = None, soup: Any = None, raw_html: str = "") -> str:
+    """Mengekstrak nomor DOI artikel dari metadata fields, elemen link, atau konten rincian publikasi."""
+    # 1. Cek dari fields_dict
+    if fields_dict:
+        # Cek kunci spesifik 'doi'
+        for k, v in fields_dict.items():
+            if 'doi' in k.lower():
+                cleaned = clean_doi(v)
+                if cleaned != "-":
+                    return cleaned
+
+        # Cek pola 10.xxxx di values fields_dict (description, source, dsb)
+        for k, v in fields_dict.items():
+            if v and '10.' in v:
+                cleaned = clean_doi(v)
+                if cleaned != "-":
+                    return cleaned
+
+    # 2. Cek elemen <a> pada halaman detail (BeautifulSoup)
+    if soup:
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag['href']
+            if 'doi.org/10.' in href or 'dx.doi.org/10.' in href or '/doi/10.' in href:
+                cleaned = clean_doi(href)
+                if cleaned != "-":
+                    return cleaned
+
+    # 3. Cek pola regex DOI pada raw_html
+    if raw_html and '10.' in raw_html:
+        m = re.search(r'\b(10\.\d{4,9}/[^\s"\'<>&]+)', raw_html)
+        if m:
+            cleaned = clean_doi(m.group(1))
+            if cleaned != "-":
+                return cleaned
+
+    return "-"
+
+
 def extract_name_tokens(text: str) -> List[str]:
     """Ekstrak token alfabet nama tanpa gelar akademis umum."""
     academic_titles = {
@@ -1019,13 +1150,13 @@ class GoogleScholarScraper:
             df = pd.DataFrame(self.records)
 
             desired_order = [
-                'No', 'Judul Publikasi', 'Penulis (Authors)', 'Status Penulis',
+                'No', 'Profil Dosen', 'Judul Publikasi', 'Penulis (Authors)', 'Status Penulis',
                 'Nama Jurnal / Prosiding', 'Publisher', 'Jenis Jurnal', 'Terindeks',
                 'Kategori Publikasi', 'Tanggal Terbit', 'Tahun', 'Vol/No/Hal'
             ]
             for yr in self.target_years:
                 desired_order.append(f'Sitasi {yr}')
-            desired_order.extend(['Total Sitasi Periode', 'Total Sitasi (All)', 'Link Artikel'])
+            desired_order.extend(['Total Sitasi Periode', 'Total Sitasi (All)', 'Link Artikel', 'DOI'])
 
             ordered_cols = [c for c in desired_order if c in df.columns] + [c for c in df.columns if c not in desired_order]
             df = df[ordered_cols]
@@ -1052,6 +1183,14 @@ class GoogleScholarScraper:
                 existing_df = pd.read_excel(target_path)
                 if 'Publisher' not in existing_df.columns:
                     existing_df['Publisher'] = '-'
+                if 'Profil Dosen' not in existing_df.columns:
+                    existing_df['Profil Dosen'] = self.author_name
+                else:
+                    existing_df['Profil Dosen'] = existing_df['Profil Dosen'].apply(
+                        lambda x: standardize_author_name(str(x)) if pd.notna(x) else self.author_name
+                    )
+                if 'DOI' not in existing_df.columns:
+                    existing_df['DOI'] = '-'
 
                 self.records = existing_df.to_dict('records')
                 for r in self.records:
@@ -1130,7 +1269,8 @@ class GoogleScholarScraper:
         pub_url: str,
         total_cites: int,
         cites_per_year: Dict[int, int],
-        fields_dict: Optional[Dict[str, str]] = None
+        fields_dict: Optional[Dict[str, str]] = None,
+        doi: str = "-"
     ) -> Dict[str, Any]:
         """Helper terpadu untuk menyusun dictionary baris metadata artikel secara konsisten."""
         author_status = determine_author_status(self.author_name, authors_str)
@@ -1187,6 +1327,7 @@ class GoogleScholarScraper:
 
         record = {
             'No': len(self.records) + 1,
+            'Profil Dosen': self.author_name,
             'Judul Publikasi': title,
             'Penulis (Authors)': authors_str,
             'Status Penulis': author_status,
@@ -1206,6 +1347,7 @@ class GoogleScholarScraper:
         record['Total Sitasi Periode'] = total_range
         record['Total Sitasi (All)'] = total_cites
         record['Link Artikel'] = pub_url
+        record['DOI'] = doi
 
         return record
 
@@ -1243,7 +1385,10 @@ class GoogleScholarScraper:
                 elif 'Google' in raw_title:
                     detected_name = raw_title.replace('Google Scholar', '').replace('Google Cendekia', '').strip()
 
-            self.author_name = detected_name if detected_name else self.author_id
+            if detected_name:
+                self.author_name = standardize_author_name(detected_name)
+            else:
+                self.author_name = self.author_id
             first = extract_first_name(self.author_name)
             self.clean_first_name = re.sub(r'[^a-zA-Z0-9_-]', '', first).lower() if first else self.author_id.lower()
             if not self.clean_first_name:
@@ -1544,6 +1689,12 @@ class GoogleScholarScraper:
                             if y in cites_per_year:
                                 cites_per_year[y] = nonzero.get(y, 0)
 
+                    doi_val = extract_doi(
+                        fields_dict=fields_dict,
+                        soup=soup,
+                        raw_html=self.driver.page_source if self.driver else ""
+                    )
+
                     record = self._build_article_record(
                         title=title,
                         authors_str=authors_str,
@@ -1555,16 +1706,18 @@ class GoogleScholarScraper:
                         pub_url=pub_url,
                         total_cites=total_cites,
                         cites_per_year=cites_per_year,
-                        fields_dict=fields_dict
+                        fields_dict=fields_dict,
+                        doi=doi_val
                     )
                     self.records.append(record)
                     self.processed_titles.add(title.strip().lower())
                     self.save_data()
 
                     tag = "0 SITASI" if total_cites == 0 else "BERHASIL"
+                    doi_info = f" | DOI: {record['DOI']}" if record['DOI'] != '-' else ""
                     self.log(
                         f"[{idx}/{total_to_process}] [{tag}] {title[:35]}... "
-                        f"({record['Status Penulis']} | {record['Jenis Jurnal']} | {record['Terindeks']} | "
+                        f"({record['Status Penulis']} | {record['Jenis Jurnal']} | {record['Terindeks']}{doi_info} | "
                         f"Sitasi {self.start_year}-{self.end_year}: {record['Total Sitasi Periode']})"
                     )
                     if not self._interruptible_sleep(random.uniform(self.min_delay, self.max_delay)):
@@ -1583,7 +1736,8 @@ class GoogleScholarScraper:
                         pub_url=pub_url,
                         total_cites=total_cites,
                         cites_per_year=cites_per_year,
-                        fields_dict=None
+                        fields_dict=None,
+                        doi="-"
                     )
                     self.records.append(fallback_record)
                     self.processed_titles.add(title.strip().lower())
