@@ -14,6 +14,7 @@ import warnings
 import threading
 import subprocess
 from datetime import datetime
+from difflib import SequenceMatcher
 from typing import Optional, Dict, Any, List, Set, Union
 
 import requests
@@ -437,9 +438,64 @@ def clean_doi(doi_str: str) -> str:
     return "-"
 
 
-def extract_doi(fields_dict: Optional[Dict[str, str]] = None, soup: Any = None, raw_html: str = "") -> str:
-    """Mengekstrak nomor DOI artikel dari metadata fields, elemen link, atau konten rincian publikasi."""
-    # 1. Cek dari fields_dict
+def normalize_title_for_matching(title: str) -> str:
+    """Normalisasi string judul publikasi untuk perbandingan kemiripan."""
+    clean = re.sub(r'[^a-zA-Z0-9\s]', ' ', str(title).lower())
+    return re.sub(r'\s+', ' ', clean).strip()
+
+
+def calculate_title_similarity(title_a: str, title_b: str) -> float:
+    """Menghitung rasio kemiripan (0.0 s.d 1.0) antara dua judul publikasi."""
+    na = normalize_title_for_matching(title_a)
+    nb = normalize_title_for_matching(title_b)
+    if not na or not nb:
+        return 0.0
+    return SequenceMatcher(None, na, nb).ratio()
+
+
+def lookup_crossref_doi(title: str, min_similarity: float = 0.95, timeout: float = 5.0) -> str:
+    """
+    Mencari DOI resmi artikel ilmiah via Crossref REST API.
+    Hanya mengembalikan DOI jika kemiripan judul mencapai ambang batas min_similarity (default: 0.95 / 95%).
+    """
+    if not title or len(str(title).strip()) < 5:
+        return "-"
+    try:
+        url = f"https://api.crossref.org/works?query.title={requests.utils.quote(str(title).strip())}&rows=3"
+        headers = {
+            'User-Agent': 'PublikasiDosenScraper/1.0 (mailto:scholar_scraper@dosen.ac.id)'
+        }
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get('message', {}).get('items', [])
+            for item in items:
+                cr_titles = item.get('title', [])
+                if not cr_titles:
+                    continue
+                cr_title = cr_titles[0]
+                sim = calculate_title_similarity(title, cr_title)
+                if sim >= min_similarity:
+                    raw_doi = item.get('DOI', '')
+                    cleaned = clean_doi(raw_doi)
+                    if cleaned != "-":
+                        return cleaned
+    except Exception:
+        pass
+    return "-"
+
+
+def extract_doi(
+    fields_dict: Optional[Dict[str, str]] = None,
+    soup: Any = None,
+    raw_html: str = "",
+    title: str = ""
+) -> str:
+    """
+    Mengekstrak nomor DOI artikel dari metadata Google Scholar atau via Crossref REST API
+    dengan ambang batas kemiripan judul 95%.
+    """
+    # 1. Cek langsung dari fields_dict Google Scholar
     if fields_dict:
         # Cek kunci spesifik 'doi'
         for k, v in fields_dict.items():
@@ -455,7 +511,7 @@ def extract_doi(fields_dict: Optional[Dict[str, str]] = None, soup: Any = None, 
                 if cleaned != "-":
                     return cleaned
 
-    # 2. Cek elemen <a> pada halaman detail (BeautifulSoup)
+    # 2. Cek elemen <a> pada halaman detail Google Scholar (BeautifulSoup)
     if soup:
         for a_tag in soup.find_all('a', href=True):
             href = a_tag['href']
@@ -464,13 +520,19 @@ def extract_doi(fields_dict: Optional[Dict[str, str]] = None, soup: Any = None, 
                 if cleaned != "-":
                     return cleaned
 
-    # 3. Cek pola regex DOI pada raw_html
+    # 3. Cek pola regex DOI pada raw_html halaman
     if raw_html and '10.' in raw_html:
         m = re.search(r'\b(10\.\d{4,9}/[^\s"\'<>&]+)', raw_html)
         if m:
             cleaned = clean_doi(m.group(1))
             if cleaned != "-":
                 return cleaned
+
+    # 4. Jika belum ada di Google Scholar, cari via Crossref REST API (Kemiripan >= 95%)
+    if title:
+        cr_doi = lookup_crossref_doi(title=title, min_similarity=0.95)
+        if cr_doi != "-":
+            return cr_doi
 
     return "-"
 
@@ -1692,7 +1754,8 @@ class GoogleScholarScraper:
                     doi_val = extract_doi(
                         fields_dict=fields_dict,
                         soup=soup,
-                        raw_html=self.driver.page_source if self.driver else ""
+                        raw_html=self.driver.page_source if self.driver else "",
+                        title=title
                     )
 
                     record = self._build_article_record(
@@ -1725,6 +1788,7 @@ class GoogleScholarScraper:
 
                 except Exception as ex:
                     self.log(f"Gagal memuat detail {title[:30]}... ({ex}). Menyimpan metadata dasar.")
+                    fallback_doi = lookup_crossref_doi(title=title, min_similarity=0.95)
                     fallback_record = self._build_article_record(
                         title=title,
                         authors_str=authors_str,
@@ -1737,7 +1801,7 @@ class GoogleScholarScraper:
                         total_cites=total_cites,
                         cites_per_year=cites_per_year,
                         fields_dict=None,
-                        doi="-"
+                        doi=fallback_doi
                     )
                     self.records.append(fallback_record)
                     self.processed_titles.add(title.strip().lower())
