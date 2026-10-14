@@ -327,8 +327,7 @@ def render_scraper_tab() -> None:
                         headless=False,
                         min_delay=min_delay,
                         max_delay=max_delay,
-                        max_pubs=int(max_pubs) if max_pubs > 0 else None,
-                        merge_results=False
+                        max_pubs=int(max_pubs) if max_pubs > 0 else None
                     )
                     st.session_state.job = new_job
                     st.session_state.job_was_running = True
@@ -370,7 +369,6 @@ def render_scraper_tab() -> None:
             """, unsafe_allow_html=True)
 
         is_batch = getattr(current_job, 'is_batch', False)
-        merge_mode = getattr(current_job, 'merge_results', False)
 
         # Kartu Metrik Ringkas
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
@@ -455,7 +453,7 @@ def render_scraper_tab() -> None:
                         st.download_button(
                             label=f"Unduh Semua Berkas ({len(valid_files)} Berkas ZIP)",
                             data=zip_buf,
-                            file_name=f"scholar_batch_{current_job.start_year}_{current_job.end_year}.zip",
+                            file_name=f"batch_{current_job.start_year}_{current_job.end_year}.zip".lower(),
                             mime="application/zip",
                             type="primary",
                             use_container_width=True
@@ -468,7 +466,8 @@ def render_scraper_tab() -> None:
             else:
                 # Mode Profil Tunggal
                 author_display = getattr(current_job, 'author_name', current_job.author_id)
-                filename_display = getattr(current_job, 'filename', f"scholar_{current_job.author_id}.xlsx")
+                fallback_name = f"{current_job.author_id}_{current_job.start_year}_{current_job.end_year}.xlsx".lower()
+                filename_display = getattr(current_job, 'filename', fallback_name)
                 file_path_display = getattr(current_job, 'xlsx_file', f"{OUTPUT_DIR}/{filename_display}")
 
                 st.markdown(f"#### Data Publikasi: {author_display}")
@@ -643,7 +642,8 @@ def render_analytics_tab() -> None:
                 df_sub = pd.read_excel(f_path, sheet_name=s_name)
                 if df_sub is not None and not df_sub.empty:
                     if 'Profil Dosen' not in df_sub.columns or df_sub['Profil Dosen'].isnull().all():
-                        author_guess = s_name if len(xl.sheet_names) > 1 else f_info['filename'].replace('scholar_', '').split('_')[0]
+                        raw_base = f_info['filename'].replace('scholar_', '').replace('.xlsx', '')
+                        author_guess = s_name if len(xl.sheet_names) > 1 else raw_base.split('_')[0].capitalize()
                         df_sub['Profil Dosen'] = author_guess
                     df_sub['Sumber Berkas'] = f_info['filename']
                     dfs.append(df_sub)

@@ -35,7 +35,7 @@ Aplikasi web berbasis **Streamlit** dan **Selenium** untuk mengekstrak data prof
 
 5. **Format Penyimpanan Excel:**
    - Berkas otomatis tersimpan di folder `hasil_scraping/` dalam format `.xlsx`.
-   - Penamaan berkas otomatis berdasarkan nama author dan rentang tahun (contoh: `scholar_Budi_2023_2026.xlsx`).
+   - Penamaan berkas otomatis menggunakan huruf kecil berdasarkan nama author dan rentang tahun (contoh: `budi_2023_2026.xlsx`).
    - Struktur kolom:
      `No` | `Judul Publikasi` | `Penulis (Authors)` | `Status Penulis` | `Nama Jurnal / Prosiding` | `Publisher` | `Jenis Jurnal` | `Terindeks` | `Tanggal Terbit` | `Tahun` | `Vol/No/Hal` | `Sitasi [Tahun]...` | `Total Sitasi Periode` | `Total Sitasi (All)` | `Link Artikel`
 

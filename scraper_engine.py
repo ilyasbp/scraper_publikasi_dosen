@@ -985,8 +985,8 @@ class GoogleScholarScraper:
         os.makedirs(self.output_dir, exist_ok=True)
 
         self.author_name = self.author_id
-        self.clean_first_name = self.author_id
-        self.filename = f"scholar_{self.clean_first_name}_{self.start_year}_{self.end_year}.xlsx"
+        self.clean_first_name = self.author_id.lower()
+        self.filename = f"{self.clean_first_name}_{self.start_year}_{self.end_year}.xlsx".lower()
         self.xlsx_file = os.path.join(self.output_dir, self.filename)
 
         self.driver: Optional[webdriver.Chrome] = None
@@ -1040,8 +1040,10 @@ class GoogleScholarScraper:
         """Mengecek berkas progres sebelumnya agar proses scraping bisa dilanjutkan (resume)."""
         candidates = [
             self.xlsx_file,
-            os.path.join(self.output_dir, f"scholar_{self.author_id}_{self.start_year}_{self.end_year}.xlsx"),
-            os.path.join(self.output_dir, f"scholar_{self.clean_first_name}_{self.start_year}_{self.end_year}.xlsx")
+            os.path.join(self.output_dir, f"{self.clean_first_name}_{self.start_year}_{self.end_year}.xlsx".lower()),
+            os.path.join(self.output_dir, f"{self.author_id}_{self.start_year}_{self.end_year}.xlsx".lower()),
+            os.path.join(self.output_dir, f"scholar_{self.clean_first_name}_{self.start_year}_{self.end_year}.xlsx"),
+            os.path.join(self.output_dir, f"scholar_{self.author_id}_{self.start_year}_{self.end_year}.xlsx")
         ]
         target_path = next((p for p in candidates if os.path.exists(p)), None)
 
@@ -1243,11 +1245,11 @@ class GoogleScholarScraper:
 
             self.author_name = detected_name if detected_name else self.author_id
             first = extract_first_name(self.author_name)
-            self.clean_first_name = re.sub(r'[^a-zA-Z0-9_-]', '', first) if first else self.author_id
+            self.clean_first_name = re.sub(r'[^a-zA-Z0-9_-]', '', first).lower() if first else self.author_id.lower()
             if not self.clean_first_name:
-                self.clean_first_name = self.author_id
+                self.clean_first_name = self.author_id.lower()
 
-            self.filename = f"scholar_{self.clean_first_name}_{self.start_year}_{self.end_year}.xlsx"
+            self.filename = f"{self.clean_first_name}_{self.start_year}_{self.end_year}.xlsx".lower()
             self.xlsx_file = os.path.join(self.output_dir, self.filename)
 
             self.log(f"Author: {self.author_name} (Nama File: {self.filename})")
@@ -1625,8 +1627,7 @@ class ScrapingJob:
         headless: bool = False,
         min_delay: float = 1.5,
         max_delay: float = 3.0,
-        max_pubs: Optional[int] = None,
-        merge_results: bool = False
+        max_pubs: Optional[int] = None
     ):
         if isinstance(author_id, list):
             raw_ids = [extract_author_id(a) for a in author_id if a and extract_author_id(a)]
@@ -1642,7 +1643,6 @@ class ScrapingJob:
             self.author_ids = [extracted] if extracted else []
 
         self.is_batch = len(self.author_ids) > 1
-        self.merge_results = merge_results
         self.total_authors = len(self.author_ids)
         self.current_author_idx = 0
 
@@ -1656,10 +1656,9 @@ class ScrapingJob:
 
         self.output_dir = OUTPUT_DIR
         self.author_name = self.author_id
-        self.clean_first_name = self.author_id
-        self.filename = f"scholar_{self.clean_first_name}_{self.start_year}_{self.end_year}.xlsx"
+        self.clean_first_name = self.author_id.lower()
+        self.filename = f"{self.clean_first_name}_{self.start_year}_{self.end_year}.xlsx".lower()
         self.xlsx_file = os.path.join(self.output_dir, self.filename)
-        self.combined_xlsx_file: Optional[str] = None
 
         self.is_running = False
         self.stop_requested = False
@@ -1711,60 +1710,6 @@ class ScrapingJob:
             self.records = list(all_accumulated) + cur_labeled
         else:
             self.records = list(current_author_records)
-
-    def _create_merged_excel_file(self, all_records: List[Dict[str, Any]]) -> None:
-        """Membuat file Excel gabungan dengan multi-sheet: sheet rekap semua publikasi dan sheet per dosen."""
-        try:
-            os.makedirs(self.output_dir, exist_ok=True)
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            merged_filename = f"scholar_batch_gabungan_{self.start_year}_{self.end_year}_{ts}.xlsx"
-            merged_filepath = os.path.join(self.output_dir, merged_filename)
-
-            df_merged = pd.DataFrame(all_records)
-            cols = list(df_merged.columns)
-            desired_order = [
-                'No', 'Profil Dosen', 'Judul Publikasi', 'Penulis (Authors)', 'Status Penulis',
-                'Nama Jurnal / Prosiding', 'Publisher', 'Jenis Jurnal', 'Terindeks',
-                'Kategori Publikasi', 'Tanggal Terbit', 'Tahun', 'Vol/No/Hal'
-            ]
-            for yr in range(self.start_year, self.end_year + 1):
-                desired_order.append(f'Sitasi {yr}')
-            desired_order.extend(['Total Sitasi Periode', 'Total Sitasi (All)', 'Link Artikel'])
-
-            ordered_cols = [c for c in desired_order if c in cols] + [c for c in cols if c not in desired_order]
-            df_merged = df_merged[ordered_cols]
-            df_merged['No'] = range(1, len(df_merged) + 1)
-
-            with pd.ExcelWriter(merged_filepath, engine='openpyxl') as writer:
-                # Sheet 1: Semua Publikasi Gabungan
-                df_merged.to_excel(writer, sheet_name="Semua Publikasi", index=False)
-
-                # Sheet per dosen
-                seen_sheets = set()
-                for b_info in self.batch_results:
-                    d_name = b_info.get('author_name') or b_info.get('author_id')
-                    d_recs = b_info.get('records', [])
-                    if not d_recs:
-                        continue
-                    d_df = pd.DataFrame(d_recs)
-                    clean_sheet = re.sub(r'[:\\/?*\[\]]', '', str(d_name)).strip()[:28] or f"Dosen_{b_info['index']}"
-                    orig_sheet = clean_sheet
-                    counter = 1
-                    while clean_sheet in seen_sheets:
-                        clean_sheet = f"{orig_sheet[:25]}_{counter}"
-                        counter += 1
-                    seen_sheets.add(clean_sheet)
-
-                    d_df.to_excel(writer, sheet_name=clean_sheet, index=False)
-
-            self.xlsx_file = merged_filepath
-            self.filename = merged_filename
-            self.combined_xlsx_file = merged_filepath
-            self.author_name = f"Gabungan {len(self.batch_results)} Dosen"
-            self.records = df_merged.to_dict('records')
-            self.add_log(f"Berkas gabungan tersimpan: {merged_filename} (memuat sheet 'Semua Publikasi' & sheet per dosen).")
-        except Exception as ex:
-            self.add_log(f"Peringatan: Gagal membuat berkas Excel gabungan: {ex}")
 
     def _worker(self):
         self.is_running = True
@@ -1850,10 +1795,6 @@ class ScrapingJob:
                 if self.stop_requested:
                     break
 
-            # Jika batch dan merge_results, buat file gabungan
-            if self.is_batch and self.merge_results and all_accumulated_records:
-                self._create_merged_excel_file(all_accumulated_records)
-
         except Exception as e:
             self.error_message = str(e)
             self.add_log(f"Error tidak terduga: {e}")
@@ -1868,10 +1809,7 @@ class ScrapingJob:
                 if self.is_batch:
                     done_count = len(self.batch_results)
                     total_p = len(self.records)
-                    if self.merge_results and getattr(self, 'combined_xlsx_file', None):
-                        self.status = f"Selesai! {done_count} dosen ({total_p} publikasi) berhasil digabung di {self.filename}."
-                    else:
-                        self.status = f"Selesai! {done_count} dosen ({total_p} publikasi) tersimpan di berkas masing-masing."
+                    self.status = f"Selesai! {done_count} dosen ({total_p} publikasi) tersimpan di berkas masing-masing."
                 else:
                     self.status = f"Selesai! {len(self.records)} publikasi tersimpan di {self.filename}."
 
