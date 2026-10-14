@@ -416,57 +416,28 @@ def render_scraper_tab() -> None:
 
         # Log Aktivitas
         with st.expander(f"Log Aktivitas ({len(current_job.logs)})", expanded=bool(current_job.is_running and not current_job.stop_requested)):
-            recent_logs = current_job.logs[-80:] if current_job.logs else ["Belum ada aktivitas tercatat."]
-            escaped_log = html.escape("\n".join(recent_logs))
-            console_html = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  html, body {{
-    margin: 0;
-    padding: 0;
-    background: transparent;
-    overflow: hidden;
-  }}
-  #log-console {{
-    height: 160px;
-    box-sizing: border-box;
-    overflow-y: auto;
-    background: #0f172a;
-    color: #e2e8f0;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 11.5px;
-    line-height: 1.5;
-    padding: 8px 12px;
-    border-radius: 6px;
-    border: 1px solid #334155;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }}
-  #log-console::-webkit-scrollbar {{
-    width: 6px;
-  }}
-  #log-console::-webkit-scrollbar-track {{
-    background: #1e293b;
-  }}
-  #log-console::-webkit-scrollbar-thumb {{
-    background: #475569;
-    border-radius: 3px;
-  }}
-</style>
-</head>
-<body>
-  <div id="log-console">{escaped_log}</div>
-  <script>
-    const el = document.getElementById('log-console');
-    if (el) {{
-      el.scrollTop = el.scrollHeight;
-    }}
-  </script>
-</body>
-</html>"""
-            st.components.v1.html(console_html, height=170)
+            log_text = "\n".join(current_job.logs[-80:]) if current_job.logs else "Belum ada aktivitas tercatat."
+            st.text_area("Console", value=log_text, height=160, disabled=True, label_visibility="collapsed")
+            st.components.v1.html(
+                """
+                <script>
+                function scrollLogToBottom() {
+                    try {
+                        const doc = window.parent.document;
+                        const textareas = doc.querySelectorAll('textarea');
+                        textareas.forEach(t => {
+                            t.scrollTop = t.scrollHeight;
+                        });
+                    } catch (e) {}
+                }
+                scrollLogToBottom();
+                setTimeout(scrollLogToBottom, 50);
+                setTimeout(scrollLogToBottom, 150);
+                </script>
+                """,
+                height=0,
+                width=0
+            )
 
         # Preview Data & Aksi Berkas
         if current_job.records:
@@ -493,27 +464,9 @@ def render_scraper_tab() -> None:
                         st.caption(f"Lokasi berkas: `{sel_item.get('xlsx_file')}`")
                         st.dataframe(pd.DataFrame(sel_item['records']), use_container_width=True, height=280, hide_index=True)
 
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    valid_files = [b['xlsx_file'] for b in current_job.batch_results if b.get('xlsx_file') and os.path.exists(b['xlsx_file'])]
-                    if valid_files:
-                        zip_buf = io.BytesIO()
-                        with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-                            for vf in valid_files:
-                                zf.write(vf, arcname=os.path.basename(vf))
-                        zip_buf.seek(0)
-                        st.download_button(
-                            label=f"Unduh Semua Berkas ({len(valid_files)} Berkas ZIP)",
-                            data=zip_buf,
-                            file_name=f"batch_{current_job.start_year}_{current_job.end_year}.zip".lower(),
-                            mime="application/zip",
-                            type="primary",
-                            use_container_width=True
-                        )
-                with col_d2:
-                    if st.button("Buka Hasil", key="btn_open_batch_sep", use_container_width=True):
-                        open_output_folder(OUTPUT_DIR)
-                        st.toast("Folder 'hasil_scraping' telah dibuka.")
+                if st.button("Buka Hasil", key="btn_open_batch_sep", use_container_width=True):
+                    open_output_folder(OUTPUT_DIR)
+                    st.toast("Folder 'hasil_scraping' telah dibuka.")
 
             else:
                 # Mode Profil Tunggal
@@ -527,23 +480,9 @@ def render_scraper_tab() -> None:
                 df = pd.DataFrame(current_job.records)
                 st.dataframe(df, use_container_width=True, height=320, hide_index=True)
 
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    if os.path.exists(file_path_display):
-                        with open(file_path_display, 'rb') as f_in:
-                            excel_bytes = f_in.read()
-                        st.download_button(
-                            label="Unduh Berkas Excel (.xlsx)",
-                            data=excel_bytes,
-                            file_name=filename_display,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            type="primary",
-                            use_container_width=True
-                        )
-                with col_d2:
-                    if st.button("Buka Hasil", key="btn_open_single", use_container_width=True):
-                        open_output_folder(OUTPUT_DIR)
-                        st.toast("Folder 'hasil_scraping' telah dibuka.")
+                if st.button("Buka Hasil", key="btn_open_single", use_container_width=True):
+                    open_output_folder(OUTPUT_DIR)
+                    st.toast("Folder 'hasil_scraping' telah dibuka.")
 
     render_live_monitor()
 
