@@ -190,8 +190,7 @@ def init_session_state() -> None:
         'active_dataset_name': "",
         'job_was_running': False,
         'author_items': [{'id': 0, 'value': "K_X8HzoAAAAJ"}],
-        'next_author_id': 1,
-        'batch_merge_mode': "Dijadikan Satu (1 Berkas Excel Gabungan)"
+        'next_author_id': 1
     }
     for key, default_val in defaults.items():
         if key not in st.session_state:
@@ -252,27 +251,11 @@ def render_scraper_tab() -> None:
                 )
                 item['value'] = val
 
-        # Tombol Tambah ID & Opsi Penggabungan
-        col_btn_add, col_merge = st.columns([1.5, 3.5])
-        with col_btn_add:
-            if st.button("+ Tambah ID / URL", disabled=is_running, help="Tambah slot profil dosen lain untuk scraping batch"):
-                st.session_state.author_items.append({'id': st.session_state.next_author_id, 'value': ''})
-                st.session_state.next_author_id += 1
-                st.rerun()
-
-        with col_merge:
-            if is_multiple:
-                st.radio(
-                    "Hasil Scraping Batch:",
-                    options=[
-                        "Dijadikan Satu (1 Berkas Excel Gabungan)",
-                        "Tetap Terpisah (Berkas Excel Mandiri per Dosen)"
-                    ],
-                    key="batch_merge_mode",
-                    horizontal=True,
-                    disabled=is_running,
-                    help="Pilih apakah seluruh publikasi dosen digabung dalam satu file Excel atau disimpan terpisah per profil."
-                )
+        # Tombol Tambah ID
+        if st.button("+ Tambah ID / URL", disabled=is_running, help="Tambah slot profil dosen lain untuk scraping batch"):
+            st.session_state.author_items.append({'id': st.session_state.next_author_id, 'value': ''})
+            st.session_state.next_author_id += 1
+            st.rerun()
 
         st.markdown("<div style='margin-bottom: 0.6rem;'></div>", unsafe_allow_html=True)
 
@@ -280,7 +263,7 @@ def render_scraper_tab() -> None:
         with col_y1:
             start_year = st.number_input("Tahun Mulai", min_value=1990, max_value=2030, value=2023, step=1, disabled=is_running)
             speed_option = st.selectbox(
-                "Kecepatan Scraping",
+                "Jeda Scrapping",
                 options=[
                     "Santai / Aman (2.0 - 3.5 detik)",
                     "Standar (1.5 - 2.5 detik)",
@@ -337,7 +320,6 @@ def render_scraper_tab() -> None:
                         job.stop(wait=True, timeout=2.5)
                         job.is_running = False
 
-                    is_merge = st.session_state.get('batch_merge_mode', '').startswith("Dijadikan Satu")
                     new_job = ScrapingJob(
                         author_id=gathered_ids if len(gathered_ids) > 1 else gathered_ids[0],
                         start_year=int(start_year),
@@ -346,7 +328,7 @@ def render_scraper_tab() -> None:
                         min_delay=min_delay,
                         max_delay=max_delay,
                         max_pubs=int(max_pubs) if max_pubs > 0 else None,
-                        merge_results=is_merge
+                        merge_results=False
                     )
                     st.session_state.job = new_job
                     st.session_state.job_was_running = True
@@ -438,8 +420,8 @@ def render_scraper_tab() -> None:
 
         # Preview Data & Aksi Berkas
         if current_job.records:
-            if is_batch and not merge_mode:
-                # Mode Tetap Terpisah
+            if is_batch:
+                # Mode Batch (Selalu Berkas Terpisah per Dosen)
                 st.markdown(f"#### Hasil Scraping Batch ({len(current_job.batch_results)} Dosen — Berkas Terpisah)")
                 summary_data = []
                 for b in current_job.batch_results:
@@ -480,32 +462,6 @@ def render_scraper_tab() -> None:
                         )
                 with col_d2:
                     if st.button("Buka Hasil", key="btn_open_batch_sep", use_container_width=True):
-                        open_output_folder(OUTPUT_DIR)
-                        st.toast("Folder 'hasil_scraping' telah dibuka.")
-
-            elif is_batch and merge_mode:
-                # Mode Dijadikan Satu
-                file_path_display = getattr(current_job, 'xlsx_file', f"{OUTPUT_DIR}/{current_job.filename}")
-                st.markdown(f"#### Data Publikasi Gabungan ({len(current_job.batch_results)} Dosen, {len(current_job.records)} Artikel)")
-                st.caption(f"Lokasi berkas gabungan: `{file_path_display}`")
-                df = pd.DataFrame(current_job.records)
-                st.dataframe(df, use_container_width=True, height=320, hide_index=True)
-
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    if os.path.exists(file_path_display):
-                        with open(file_path_display, 'rb') as f_in:
-                            excel_bytes = f_in.read()
-                        st.download_button(
-                            label="Unduh Berkas Gabungan (.xlsx)",
-                            data=excel_bytes,
-                            file_name=os.path.basename(file_path_display),
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            type="primary",
-                            use_container_width=True
-                        )
-                with col_d2:
-                    if st.button("Buka Hasil", key="btn_open_batch_merged", use_container_width=True):
                         open_output_folder(OUTPUT_DIR)
                         st.toast("Folder 'hasil_scraping' telah dibuka.")
 
@@ -606,17 +562,17 @@ def build_summary_table(df: pd.DataFrame, years: List[int]) -> Tuple[pd.DataFram
 
 
 def render_analytics_tab() -> None:
-    """Merender tab analisis publikasi & sitasi dengan pemilih berkas Excel dan tabel/chart standar akreditasi."""
+    """Merender tab analisis publikasi & sitasi dari berkas Excel di folder hasil dengan dukungan multi-file dan visualisasi rapi."""
     col_a_head, col_a_act = st.columns([3, 1])
     with col_a_head:
         st.markdown("### Analisis Publikasi & Sitasi")
-        st.write("Pilih berkas Excel hasil scraping atau sesi aktif untuk menyajikan tabel baku akreditasi dan visualisasi tren publikasi.")
+        st.write("Analisis publikasi dosen langsung dari berkas Excel di folder hasil scraping. Anda dapat memilih beberapa berkas sekaligus.")
     with col_a_act:
         if st.button("Buka Folder Hasil", key="btn_open_folder_analytics", use_container_width=True, help="Buka folder hasil_scraping langsung di komputer"):
             open_output_folder(OUTPUT_DIR)
             st.toast("Folder 'hasil_scraping' telah dibuka.")
 
-    # 1. Pindai berkas Excel yang tersedia di direktori lokal
+    # 1. Pindai seluruh berkas Excel di folder hasil
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     found_files: Dict[str, str] = {}
     if os.path.exists(OUTPUT_DIR):
@@ -644,108 +600,68 @@ def render_analytics_tab() -> None:
             pass
     file_items.sort(key=lambda x: x['mtime'], reverse=True)
 
-    # 2. Pilihan Sumber Data Excel
-    source_options = []
-    has_active_session = bool(st.session_state.job and st.session_state.job.records)
-    if has_active_session:
-        source_options.append("Sesi Scraping Aktif")
-    if file_items:
-        source_options.append("Berkas Hasil Scraping")
-    source_options.append("Unggah Berkas Excel (.xlsx)")
-
-    if not source_options:
-        st.info("Belum ada berkas Excel di folder hasil_scraping atau sesi scraping aktif. Silakan jalankan penarikan di tab Publikasi atau unggah berkas Excel.")
+    if not file_items:
+        st.info("Belum ada berkas Excel di folder `hasil_scraping/`. Silakan jalankan penarikan publikasi pada tab Publikasi terlebih dahulu.")
         return
 
-    col_src1, col_src2 = st.columns([1, 2])
-    with col_src1:
-        source_type = st.radio(
-            "Pilihan Sumber Data Excel:",
-            options=source_options,
-            key="analytics_source_type"
+    # 2. Pilihan Multi-Excel
+    all_file_labels = [item['label'] for item in file_items]
+    label_to_item = {item['label']: item for item in file_items}
+
+    def on_select_all_toggle():
+        if st.session_state.get("analytics_select_all_files", False):
+            st.session_state["analytics_multiselect_files"] = all_file_labels
+        else:
+            st.session_state["analytics_multiselect_files"] = [all_file_labels[0]] if all_file_labels else []
+
+    col_ctrl1, col_ctrl2 = st.columns([3.8, 1.2])
+    with col_ctrl2:
+        st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
+        st.checkbox("Pilih Semua", value=False, key="analytics_select_all_files", on_change=on_select_all_toggle)
+
+    with col_ctrl1:
+        selected_labels = st.multiselect(
+            "Pilih Berkas Excel untuk Dianalisis (Bisa Lebih dari 1):",
+            options=all_file_labels,
+            default=[all_file_labels[0]],
+            key="analytics_multiselect_files",
+            help="Pilih satu atau beberapa berkas Excel hasil scraping untuk digabung dan dianalisis bersama."
         )
 
-    raw_df: Optional[pd.DataFrame] = None
-    dataset_name = ""
-    selected_sheet_name = ""
-
-    with col_src2:
-        if source_type == "Sesi Scraping Aktif":
-            raw_df = pd.DataFrame(st.session_state.job.records)
-            if getattr(st.session_state.job, 'is_batch', False):
-                done_c = len(st.session_state.job.batch_results) or st.session_state.job.total_authors
-                dataset_name = f"Sesi Batch ({done_c} Profil)"
-            else:
-                dataset_name = f"Sesi Aktif ({st.session_state.job.author_name or st.session_state.job.author_id})"
-            st.success(f"Memuat data dari **{dataset_name}** ({len(raw_df)} publikasi).")
-
-        elif source_type == "Berkas Hasil Scraping":
-            file_choice_label = st.selectbox(
-                "Pilih Berkas Excel:",
-                options=[item['label'] for item in file_items],
-                key="analytics_file_select"
-            )
-            if file_choice_label:
-                selected_item = next(it for it in file_items if it['label'] == file_choice_label)
-                chosen_path = selected_item['path']
-                dataset_name = selected_item['filename']
-                try:
-                    excel_file = pd.ExcelFile(chosen_path)
-                    sheet_names = excel_file.sheet_names
-                    if len(sheet_names) > 1:
-                        sheet_choice = st.selectbox(
-                            "Pilih Lembar Kerja (Sheet):",
-                            options=sheet_names,
-                            index=0,
-                            key="analytics_sheet_select"
-                        )
-                        selected_sheet_name = sheet_choice
-                        raw_df = pd.read_excel(chosen_path, sheet_name=sheet_choice)
-                    else:
-                        selected_sheet_name = sheet_names[0]
-                        raw_df = pd.read_excel(chosen_path, sheet_name=selected_sheet_name)
-                except Exception as ex:
-                    st.error(f"Gagal membaca berkas Excel: {ex}")
-                    return
-
-        elif source_type == "Unggah Berkas Excel (.xlsx)":
-            uploaded_file = st.file_uploader(
-                "Unggah berkas Excel (.xlsx):",
-                type=["xlsx"],
-                key="analytics_file_upload"
-            )
-            if uploaded_file is not None:
-                dataset_name = uploaded_file.name
-                try:
-                    excel_file = pd.ExcelFile(uploaded_file)
-                    sheet_names = excel_file.sheet_names
-                    if len(sheet_names) > 1:
-                        sheet_choice = st.selectbox(
-                            "Pilih Lembar Kerja (Sheet):",
-                            options=sheet_names,
-                            index=0,
-                            key="analytics_uploaded_sheet_select"
-                        )
-                        selected_sheet_name = sheet_choice
-                        raw_df = pd.read_excel(uploaded_file, sheet_name=sheet_choice)
-                    else:
-                        selected_sheet_name = sheet_names[0]
-                        raw_df = pd.read_excel(uploaded_file, sheet_name=selected_sheet_name)
-                except Exception as ex:
-                    st.error(f"Gagal membaca berkas Excel yang diunggah: {ex}")
-                    return
-            else:
-                st.info("Silakan unggah berkas `.xlsx` hasil penarikan Google Scholar untuk dianalisis.")
-                return
-
-    if raw_df is None or raw_df.empty:
-        st.warning("Data kosong atau belum dipilih.")
+    if not selected_labels:
+        st.warning("Silakan pilih minimal 1 berkas Excel untuk menampilkan analisis.")
         return
 
-    # Filter Dosen jika data batch / memuat beberapa dosen
+    # Baca seluruh berkas yang dipilih dan gabungkan
+    dfs: List[pd.DataFrame] = []
+    for lbl in selected_labels:
+        f_info = label_to_item[lbl]
+        f_path = f_info['path']
+        try:
+            xl = pd.ExcelFile(f_path)
+            for s_name in xl.sheet_names:
+                df_sub = pd.read_excel(f_path, sheet_name=s_name)
+                if df_sub is not None and not df_sub.empty:
+                    if 'Profil Dosen' not in df_sub.columns or df_sub['Profil Dosen'].isnull().all():
+                        author_guess = s_name if len(xl.sheet_names) > 1 else f_info['filename'].replace('scholar_', '').split('_')[0]
+                        df_sub['Profil Dosen'] = author_guess
+                    df_sub['Sumber Berkas'] = f_info['filename']
+                    dfs.append(df_sub)
+        except Exception as ex:
+            st.error(f"Gagal membaca berkas `{f_info['filename']}`: {ex}")
+
+    if not dfs:
+        st.warning("Tidak ada data publikasi yang berhasil dimuat dari berkas yang dipilih.")
+        return
+
+    raw_df = pd.concat(dfs, ignore_index=True)
+
+    dataset_name = f"{len(selected_labels)} Berkas Excel" if len(selected_labels) > 1 else selected_labels[0].split(' (')[0]
+
+    # Filter Dosen jika data memuat lebih dari 1 dosen
     analytics_df = raw_df.copy()
     if 'Profil Dosen' in analytics_df.columns and analytics_df['Profil Dosen'].nunique() > 1:
-        dosen_opts = ["Semua Dosen (Gabungan)"] + sorted(list(analytics_df['Profil Dosen'].dropna().unique()))
+        dosen_opts = ["Semua Dosen (Gabungan)"] + sorted([str(x) for x in analytics_df['Profil Dosen'].dropna().unique()])
         selected_dosen_filter = st.selectbox("Filter Dosen untuk Analisis:", options=dosen_opts, key="analytics_dosen_filter")
         if selected_dosen_filter != "Semua Dosen (Gabungan)":
             analytics_df = analytics_df[analytics_df['Profil Dosen'] == selected_dosen_filter]
@@ -892,9 +808,16 @@ def render_analytics_tab() -> None:
         fig_trend.update_traces(textposition='inside', insidetextanchor='middle')
         fig_trend.for_each_trace(lambda t: t.update(text=[str(v) if v > 0 else "" for v in t.y]))
         fig_trend.update_layout(
-            height=380,
-            margin=dict(t=40, b=20, l=20, r=20),
-            legend=dict(orientation="h", yanchor="bottom", y=-0.4, xanchor="center", x=0.5)
+            height=450,
+            margin=dict(t=50, b=120, l=40, r=20),
+            legend=dict(
+                orientation="h",
+                yanchor="top",
+                y=-0.22,
+                xanchor="center",
+                x=0.5,
+                font=dict(size=11)
+            )
         )
         st.plotly_chart(fig_trend, use_container_width=True)
 
@@ -913,9 +836,16 @@ def render_analytics_tab() -> None:
                 title="Proporsi Kategori Publikasi"
             )
             fig_donut.update_layout(
-                height=380,
-                margin=dict(t=40, b=20, l=20, r=20),
-                legend=dict(orientation="h", yanchor="bottom", y=-0.4, xanchor="center", x=0.5)
+                height=420,
+                margin=dict(t=50, b=30, l=20, r=140),
+                legend=dict(
+                    orientation="v",
+                    yanchor="middle",
+                    y=0.5,
+                    xanchor="left",
+                    x=1.02,
+                    font=dict(size=11)
+                )
             )
             st.plotly_chart(fig_donut, use_container_width=True)
         else:
@@ -938,7 +868,12 @@ def render_analytics_tab() -> None:
                 color_continuous_scale='Greens'
             )
             fig_sit_trend.update_traces(textposition='outside')
-            fig_sit_trend.update_layout(xaxis=dict(tickmode='linear'), height=340, margin=dict(t=20, b=20, l=20, r=20))
+            fig_sit_trend.update_layout(
+                xaxis=dict(tickmode='linear'),
+                height=360,
+                margin=dict(t=30, b=30, l=30, r=20),
+                coloraxis_showscale=False
+            )
             st.plotly_chart(fig_sit_trend, use_container_width=True)
 
         with col_c_sit2:
@@ -956,7 +891,12 @@ def render_analytics_tab() -> None:
                 color=sort_col,
                 color_continuous_scale='Greens'
             )
-            fig_top.update_layout(yaxis=dict(autorange="reversed"), height=340, margin=dict(t=20, b=20, l=20, r=20))
+            fig_top.update_layout(
+                yaxis=dict(autorange="reversed"),
+                height=360,
+                margin=dict(t=30, b=30, l=20, r=20),
+                coloraxis_showscale=False
+            )
             st.plotly_chart(fig_top, use_container_width=True)
 
     if 'Status Penulis' in analytics_df.columns:
@@ -972,7 +912,17 @@ def render_analytics_tab() -> None:
             color_discrete_map={'Penulis Pertama': '#059669', 'Penulis Anggota': '#A7F3D0'},
             hole=0.45
         )
-        fig_status.update_layout(height=280, margin=dict(t=20, b=20, l=20, r=20))
+        fig_status.update_layout(
+            height=320,
+            margin=dict(t=30, b=40, l=20, r=20),
+            legend=dict(
+                orientation="h",
+                yanchor="top",
+                y=-0.15,
+                xanchor="center",
+                x=0.5
+            )
+        )
         st.plotly_chart(fig_status, use_container_width=True)
 
     # Pratinjau Data Lengkap

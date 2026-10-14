@@ -1261,27 +1261,10 @@ class GoogleScholarScraper:
                 EC.presence_of_element_located((By.ID, 'gsc_a_b'))
             )
 
-            # Klik "Show More" sampai seluruh publikasi terbuka
-            self.on_status("Memuat daftar seluruh publikasi...")
-            while True:
-                if self.is_stopped():
-                    break
-                try:
-                    more_btn = self.driver.find_element(By.ID, 'gsc_bpf_more')
-                    if more_btn.is_enabled() and 'disabled' not in more_btn.get_attribute('class'):
-                        self.driver.execute_script('arguments[0].click();', more_btn)
-                        if not self._interruptible_sleep(1.2):
-                            break
-                    else:
-                        break
-                except Exception:
-                    break
-
-            rows = self.driver.find_elements(By.CSS_SELECTOR, 'tr.gsc_a_tr')
-            total_pubs_found = len(rows)
-            self.log(f"Berhasil menemukan total {total_pubs_found} publikasi di profil.")
-
+            # Ekstrak publikasi halaman awal dari DOM Selenium
+            self.on_status("Mengekstrak daftar publikasi profil...")
             pub_items = []
+            rows = self.driver.find_elements(By.CSS_SELECTOR, 'tr.gsc_a_tr')
             for r in rows:
                 try:
                     title_elem = r.find_element(By.CSS_SELECTOR, 'a.gsc_a_at')
@@ -1317,6 +1300,138 @@ class GoogleScholarScraper:
                     })
                 except Exception:
                     continue
+
+            # Jika artikel mencapai 100 dan ada kemungkinan halaman lanjutan, lakukan paginasi cstart
+            if len(pub_items) >= 100 and (not self.max_pubs or self.max_pubs > len(pub_items)):
+                self.log(f"Ditemukan {len(pub_items)} publikasi di halaman pertama. Memeriksa halaman lanjutan...")
+                
+                # Gunakan requests.Session dengan cookies Selenium untuk paginasi cepat dan aman
+                req_session = requests.Session()
+                try:
+                    for cookie in self.driver.get_cookies():
+                        req_session.cookies.set(cookie['name'], cookie['value'])
+                    ua = self.driver.execute_script("return navigator.userAgent;")
+                    req_session.headers.update({
+                        'User-Agent': ua or "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                        'Accept-Language': 'en-US,en;q=0.9',
+                    })
+                except Exception:
+                    pass
+
+                cstart = len(pub_items)
+                while True:
+                    if self.is_stopped():
+                        break
+                    if self.max_pubs and len(pub_items) >= self.max_pubs:
+                        break
+
+                    self.on_status(f"Memuat daftar publikasi lanjutan ({cstart + 1}+)...")
+                    next_url = f"https://scholar.google.com/citations?user={self.author_id}&hl=en&sortby=pubdate&cstart={cstart}&pagesize=100"
+                    
+                    fetched_batch = 0
+                    try:
+                        resp = req_session.get(next_url, timeout=15)
+                        if resp.status_code == 200:
+                            soup = BeautifulSoup(resp.text, 'html.parser')
+                            next_rows = soup.select('tr.gsc_a_tr')
+                            fetched_batch = len(next_rows)
+                            for r in next_rows:
+                                title_elem = r.select_one('a.gsc_a_at')
+                                if not title_elem:
+                                    continue
+                                title = title_elem.get_text(strip=True)
+                                href = title_elem.get('href', '') or title_elem.get('data-href', '')
+                                if href.startswith('/'):
+                                    href = 'https://scholar.google.com' + href
+
+                                gray_divs = r.select('div.gs_gray')
+                                row_authors = gray_divs[0].get_text(strip=True) if len(gray_divs) > 0 else ''
+                                row_venue = gray_divs[1].get_text(strip=True) if len(gray_divs) > 1 else ''
+
+                                year_elem = r.select_one('span.gsc_a_h')
+                                pub_year = year_elem.get_text(strip=True) if year_elem else '-'
+
+                                cites_elem = r.select_one('a.gsc_a_ac')
+                                cites_text = cites_elem.get_text(strip=True) if cites_elem else ''
+                                total_cites = int(cites_text) if cites_text.isdigit() else 0
+
+                                pub_items.append({
+                                    'title': title,
+                                    'url': href,
+                                    'year': pub_year,
+                                    'total_cites': total_cites,
+                                    'row_authors': row_authors,
+                                    'row_venue': row_venue
+                                })
+                                if self.max_pubs and len(pub_items) >= self.max_pubs:
+                                    break
+                    except Exception as http_err:
+                        self.log(f"Paginasi HTTP ({http_err}), mencoba via browser...")
+                        try:
+                            self.driver.get(next_url)
+                            self.wait_for_captcha_if_needed()
+                            br_rows = self.driver.find_elements(By.CSS_SELECTOR, 'tr.gsc_a_tr')
+                            fetched_batch = len(br_rows)
+                            for r in br_rows:
+                                try:
+                                    title_elem = r.find_element(By.CSS_SELECTOR, 'a.gsc_a_at')
+                                    title = title_elem.text.strip()
+                                    href = title_elem.get_attribute('href') or title_elem.get_attribute('data-href') or ''
+                                    if href.startswith('/'):
+                                        href = 'https://scholar.google.com' + href
+
+                                    gray_divs = r.find_elements(By.CSS_SELECTOR, 'div.gs_gray')
+                                    row_authors = gray_divs[0].text.strip() if len(gray_divs) > 0 else ''
+                                    row_venue = gray_divs[1].text.strip() if len(gray_divs) > 1 else ''
+
+                                    try:
+                                        year_elem = r.find_element(By.CSS_SELECTOR, 'span.gsc_a_h')
+                                        pub_year = year_elem.text.strip() or '-'
+                                    except Exception:
+                                        pub_year = '-'
+
+                                    try:
+                                        cites_elem = r.find_element(By.CSS_SELECTOR, 'a.gsc_a_ac')
+                                        cites_text = cites_elem.text.strip()
+                                        total_cites = int(cites_text) if cites_text.isdigit() else 0
+                                    except Exception:
+                                        total_cites = 0
+
+                                    pub_items.append({
+                                        'title': title,
+                                        'url': href,
+                                        'year': pub_year,
+                                        'total_cites': total_cites,
+                                        'row_authors': row_authors,
+                                        'row_venue': row_venue
+                                    })
+                                    if self.max_pubs and len(pub_items) >= self.max_pubs:
+                                        break
+                                except Exception:
+                                    continue
+                        except Exception as br_err:
+                            self.log(f"Paginasi browser gagal: {br_err}")
+                            break
+
+                    self.log(f"Paginasi lanjutan (cstart={cstart}): berhasil membaca {fetched_batch} publikasi.")
+                    if fetched_batch < 100:
+                        break
+                    cstart += fetched_batch
+                    if not self._interruptible_sleep(1.0):
+                        break
+
+            # Deduplikasi artikel (menjaga urutan waktu)
+            seen_identifiers = set()
+            dedup_items = []
+            for item in pub_items:
+                ident = item['url'] if item['url'] else item['title'].lower()
+                if ident not in seen_identifiers:
+                    seen_identifiers.add(ident)
+                    dedup_items.append(item)
+            pub_items = dedup_items
+
+            total_pubs_found = len(pub_items)
+            self.log(f"Berhasil menemukan total {total_pubs_found} publikasi di profil.")
 
             if self.max_pubs and self.max_pubs < len(pub_items):
                 pub_items = pub_items[:self.max_pubs]
@@ -1511,7 +1626,7 @@ class ScrapingJob:
         min_delay: float = 1.5,
         max_delay: float = 3.0,
         max_pubs: Optional[int] = None,
-        merge_results: bool = True
+        merge_results: bool = False
     ):
         if isinstance(author_id, list):
             raw_ids = [extract_author_id(a) for a in author_id if a and extract_author_id(a)]
