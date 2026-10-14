@@ -562,7 +562,7 @@ def build_summary_table(df: pd.DataFrame, years: List[int]) -> Tuple[pd.DataFram
 
 def render_analytics_tab() -> None:
     """Merender tab analisis publikasi & sitasi dari berkas Excel di folder hasil dengan dukungan multi-file dan visualisasi rapi."""
-    col_a_head, col_a_act = st.columns([3, 1])
+    col_a_head, col_a_act = st.columns([2.7, 1.3])
     with col_a_head:
         st.markdown("### Analisis Publikasi & Sitasi")
         st.write("Analisis publikasi dosen langsung dari berkas Excel di folder hasil scraping. Anda dapat memilih beberapa berkas sekaligus.")
@@ -570,6 +570,7 @@ def render_analytics_tab() -> None:
         if st.button("Buka Folder Hasil", key="btn_open_folder_analytics", use_container_width=True, help="Buka folder hasil_scraping langsung di komputer"):
             open_output_folder(OUTPUT_DIR)
             st.toast("Folder 'hasil_scraping' telah dibuka.")
+        btn_download_excel_placeholder = st.empty()
 
     # 1. Pindai seluruh berkas Excel di folder hasil
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -655,6 +656,61 @@ def render_analytics_tab() -> None:
         return
 
     raw_df = pd.concat(dfs, ignore_index=True)
+
+    # Buat satu file Excel gabungan dari seluruh berkas terpilih untuk tombol unduh di col_a_act
+    merged_excel_buf = io.BytesIO()
+    with pd.ExcelWriter(merged_excel_buf, engine='openpyxl') as writer:
+        desired_order = [
+            'No', 'Profil Dosen', 'Judul Publikasi', 'Penulis (Authors)', 'Status Penulis',
+            'Nama Jurnal / Prosiding', 'Publisher', 'Jenis Jurnal', 'Terindeks',
+            'Kategori Publikasi', 'Tanggal Terbit', 'Tahun', 'Vol/No/Hal'
+        ]
+        sitasi_cols = [c for c in raw_df.columns if re.match(r'^Sitasi\s+\d{4}$', c)]
+        sitasi_cols = sorted(sitasi_cols, key=lambda x: int(re.search(r'\d{4}', x).group(0)))
+        desired_order.extend(sitasi_cols)
+        desired_order.extend(['Total Sitasi Periode', 'Total Sitasi (All)', 'Link Artikel'])
+
+        export_df = raw_df.copy()
+        ordered_cols = [c for c in desired_order if c in export_df.columns] + [c for c in export_df.columns if c not in desired_order and c != 'Sumber Berkas']
+        export_df = export_df[ordered_cols]
+        export_df['No'] = range(1, len(export_df) + 1)
+
+        # Sheet utama gabungan
+        export_df.to_excel(writer, sheet_name="Semua Publikasi", index=False)
+
+        # Jika memuat lebih dari 1 dosen/berkas, sertakan sheet untuk masing-masing profil
+        if 'Profil Dosen' in export_df.columns and export_df['Profil Dosen'].nunique() > 1:
+            seen_sheets = {"semua publikasi"}
+            for p_name, group in export_df.groupby('Profil Dosen', sort=False):
+                sheet_clean = re.sub(r'[:\\/?*\[\]]', '', str(p_name)).strip()[:28] or "Dosen"
+                counter = 1
+                unique_s_name = sheet_clean
+                while unique_s_name.lower() in seen_sheets:
+                    unique_s_name = f"{sheet_clean[:25]}_{counter}"
+                    counter += 1
+                seen_sheets.add(unique_s_name.lower())
+                group.to_excel(writer, sheet_name=unique_s_name, index=False)
+
+    merged_excel_bytes = merged_excel_buf.getvalue()
+    ts_now = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if len(selected_labels) > 1:
+        merged_dl_name = f"gabungan_{len(selected_labels)}_berkas_{ts_now}.xlsx".lower()
+        dl_btn_label = f"Unduh {len(selected_labels)} Berkas (.xlsx)"
+    else:
+        single_base = selected_labels[0].split(' (')[0].replace('.xlsx', '')
+        merged_dl_name = f"{single_base}_{ts_now}.xlsx".lower()
+        dl_btn_label = "Unduh Berkas (.xlsx)"
+
+    btn_download_excel_placeholder.download_button(
+        label=dl_btn_label,
+        data=merged_excel_bytes,
+        file_name=merged_dl_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        type="primary",
+        key="btn_download_selected_excel",
+        help="Unduh data seluruh berkas Excel yang dipilih dalam satu file Excel (.xlsx)"
+    )
 
     dataset_name = f"{len(selected_labels)} Berkas Excel" if len(selected_labels) > 1 else selected_labels[0].split(' (')[0]
 
