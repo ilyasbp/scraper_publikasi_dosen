@@ -1,6 +1,8 @@
 # Hasil output file
 hasil_scraping/
+artikel/
 *.xlsx
+*.pdf
 
 # Python & virtual environment
 __pycache__/

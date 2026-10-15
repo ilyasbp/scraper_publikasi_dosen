@@ -1070,7 +1070,7 @@ def render_downloader_tab() -> None:
                 options=DEFAULT_SCIHUB_MIRRORS,
                 default=DEFAULT_SCIHUB_MIRRORS,
                 disabled=is_running,
-                help="Daftar domain mirror Sci-Hub yang akan dicoba berurutan jika artikel tidak tersedia di Open Access."
+                help="Daftar domain mirror Sci-Hub yang diakses via browser Chrome (Selenium) untuk mengatasi CAPTCHA. Domain sci-hub.box digunakan sebagai mirror default utama."
             )
             delay_val = st.number_input(
                 "Jeda Antar Unduhan (Detik):",
@@ -1079,7 +1079,7 @@ def render_downloader_tab() -> None:
                 value=2.0,
                 step=0.5,
                 disabled=is_running,
-                help="Jeda waktu aman untuk menghindari tantangan bot dari server."
+                help="Jeda waktu aman antar artikel untuk menjaga stabilitas sesi."
             )
 
         total_found = len(extracted_dois)
@@ -1132,6 +1132,18 @@ def render_downloader_tab() -> None:
         if st.session_state.get('dl_was_running', False) and (not current_job.is_running or current_job.stop_requested):
             st.session_state.dl_was_running = False
             st.rerun(scope="app")
+
+        # Peringatan Verifikasi CAPTCHA di Sci-Hub (Bila muncul)
+        if getattr(current_job, 'is_captcha', False):
+            st.markdown("""
+            <div class="captcha-box">
+                <div class="captcha-title">Verifikasi Robot (CAPTCHA) Terdeteksi di Sci-Hub</div>
+                <div class="captcha-desc">
+                    Sci-Hub meminta verifikasi robot. Buka jendela Google Chrome di komputer Anda dan selesaikan verifikasi.<br/>
+                    Sistem akan otomatis melanjutkan pengunduhan begitu verifikasi selesai.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # Metrik Ringkas
         c1, c2, c3, c4 = st.columns(4)
