@@ -1,6 +1,6 @@
-# Scraper Publikasi Dosen (Google Scholar & SCImagoJR)
+# Scraper & Pengunduh Artikel Ilmiah
 
-Aplikasi web berbasis **Streamlit** dan **Selenium** untuk mengekstrak data profil Google Scholar, meliputi riwayat publikasi, status penulis, klasifikasi jurnal (nasional/internasional), publisher, indeksasi (Scopus Q1–Q4 & SINTA 1–6), tanggal terbit, serta rincian sitasi tahunan ke dalam format **Excel (.xlsx)** di folder **`hasil_scraping/`**.
+Aplikasi web berbasis **Streamlit** dan **Selenium** untuk ekstraksi data publikasi Google Scholar, klasifikasi akreditasi Scopus (Q1–Q4) & SINTA (1–6), analisis riwayat sitasi, serta **pengunduh otomatis berkas PDF artikel ilmiah berbasis DOI** secara hybrid melalui Open Access (Unpaywall) dan multi-mirror Sci-Hub.
 
 > Buka berkas [**tutorial_penggunaan.html**](tutorial_penggunaan.html) di browser untuk petunjuk langkah demi langkah.
 
@@ -8,30 +8,31 @@ Aplikasi web berbasis **Streamlit** dan **Selenium** untuk mengekstrak data prof
 
 ## Fitur Utama
 
-1. **Ekstraksi Data Publikasi:**
+1. **Ekstraksi Data Publikasi Google Scholar:**
    - Input Author ID atau URL profil Google Scholar.
-   - **Batch ID Scraping**: Menambahkan banyak ID / URL dosen sekaligus dengan tombol `+ Tambah ID / URL`, dilengkapi pilihan hasil berkas **Dijadikan Satu** (master Excel multi-sheet) atau **Tetap Terpisah** (berkas mandiri per profil / unduh ZIP).
+   - **Batch ID Scraping**: Mendukung banyak ID profil sekaligus.
    - Penentuan rentang tahun publikasi dan sitasi.
-   - Opsi batas jumlah publikasi per profil untuk pengujian cepat.
-   - Pemantauan progres berjenjang, metrik artikel dan sitasi, serta log aktivitas.
-   - Tombol Mulai/Berhenti (*single-click stop*) untuk mengontrol proses dengan aman.
+   - Ekstraksi DOI otomatis dengan verifikasi kemiripan Crossref API (95%).
+   - Struktur berkas Excel terstandarisasi dengan nama profil rapi (*Title Case*) dan tautan DOI lengkap (`https://doi.org/...`).
 
 2. **Klasifikasi Akreditasi & Indeksasi:**
-   - **Database SCImagoJR**: Kuartil Scopus (Q1–Q4 dan prosiding) dicocokkan secara lokal.
-   - **Auto-Detect Versi Database**: Otomatis mendeteksi berkas database terbaru di folder `data/` (misalnya `scimagojr 2026.csv`).
+   - **Database SCImagoJR**: Kuartil Scopus (Q1–Q4) dicocokkan secara lokal.
    - **Pencarian SINTA**: Jurnal nasional dicari ke portal SINTA untuk akreditasi SINTA 1–6.
-   - **Deteksi Publisher**: Mengidentifikasi penerbit jurnal/prosiding (Elsevier, Springer, IEEE, ACM, dll.).
+   - **Deteksi Publisher & Buku**: Mengidentifikasi penerbit dan mendeteksi kategori buku/prosiding/jurnal.
 
-3. **Dukungan Verifikasi CAPTCHA:**
-   - Menggunakan mode Chrome tampak (*visible*) secara default.
-   - Jika Google menampilkan verifikasi robot (CAPTCHA), dashboard akan menampilkan notifikasi. Cukup selesaikan verifikasi di jendela Chrome, dan proses akan berlanjut secara otomatis.
+3. **Pengunduh Artikel Ilmiah Berbasis DOI (Tab 'Unduh Artikel'):**
+   - **Input Fleksibel**: Mendukung unggah dokumen (**Excel, Word, PDF, TXT, CSV**) atau tempel teks daftar DOI langsung.
+   - **Deteksi Otomatis**: Memindai dan mengekstrak seluruh DOI unik secara otomatis.
+   - **Strategi Unduh Hybrid**:
+     - *Tingkat 1*: Cek akses legal **Open Access (Unpaywall API)** untuk unduhan langsung tanpa blokir.
+     - *Tingkat 2*: *Fallback* ke jaringan **Sci-Hub Multi-Mirror** (`.ru`, `.su`, `.st`, `.red`, `.box`).
+   - **Penyimpanan Terstruktur**: Disimpan di folder `artikel/{nama_dokumen}/` dengan nama berkas sesuai judul artikel.
+   - **Aksi Cepat**: Dilengkapi tombol *Buka Folder Artikel* dan *Unduh Semua PDF (.zip)*.
 
-4. **Visualisasi & Analisis Data:**
-   - Komposisi peran penulis (penulis pertama vs anggota).
-   - Sebaran jenis publikasi (nasional vs internasional).
-   - Tren pertumbuhan sitasi tahunan.
-   - Top 10 publikasi dengan sitasi terbanyak.
-   - Distribusi publikasi berdasarkan tahun terbit.
+4. **Visualisasi & Analisis Sitasi:**
+   - Komposisi kategori publikasi (8 kategori baku).
+   - Tren pertumbuhan sitasi tahunan per dosen atau gabungan.
+   - Ekspor berkas gabungan multi-profil dalam satu file Excel.
 
 5. **Format Penyimpanan Excel:**
    - Berkas otomatis tersimpan di folder `hasil_scraping/` dalam format `.xlsx`.

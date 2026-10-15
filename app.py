@@ -28,12 +28,21 @@ from scraper_engine import (
     clean_doi
 )
 
+from article_downloader import (
+    ARTIKEL_DIR,
+    DEFAULT_SCIHUB_MIRRORS,
+    extract_dois_from_text,
+    extract_dois_from_file,
+    ArticleDownloaderJob,
+    sanitize_filename
+)
+
 # ==============================================================================
 # 1. KONFIGURASI HALAMAN & GAYA VISUAL (CSS)
 # ==============================================================================
 
 st.set_page_config(
-    page_title="Scraper Publikasi Dosen",
+    page_title="Scraper & Pengunduh Artikel Ilmiah",
     page_icon=None,
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -179,8 +188,8 @@ def render_header() -> None:
     """Menampilkan header judul bersih aplikasi."""
     st.markdown("""
     <div class="header-box">
-        <div class="main-title">Scraper Publikasi Dosen</div>
-        <div class="subtitle">Ekstraksi data profil Google Scholar, klasifikasi Scopus & SINTA, serta analisis riwayat sitasi.</div>
+        <div class="main-title">Scraper & Pengunduh Artikel Ilmiah</div>
+        <div class="subtitle">Ekstraksi publikasi Google Scholar, klasifikasi Scopus & SINTA, analisis sitasi, dan pengunduh PDF artikel via DOI.</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -193,7 +202,11 @@ def init_session_state() -> None:
         'active_dataset_name': "",
         'job_was_running': False,
         'author_items': [{'id': 0, 'value': "K_X8HzoAAAAJ"}],
-        'next_author_id': 1
+        'next_author_id': 1,
+        'dl_job': None,
+        'dl_was_running': False,
+        'dl_extracted_dois': [],
+        'dl_subfolder_name': ""
     }
     for key, default_val in defaults.items():
         if key not in st.session_state:
@@ -983,6 +996,223 @@ def render_analytics_tab() -> None:
         st.dataframe(analytics_df, use_container_width=True, height=260, hide_index=True)
 
 
+# ==============================================================================
+# 4. TAB 3: UNDUH ARTIKEL ILMIAH (DOI)
+# ==============================================================================
+
+def render_downloader_tab() -> None:
+    """Merender tab formulir ekstraksi DOI dan pengunduhan artikel PDF ilmiah via Open Access & Sci-Hub."""
+    dl_job: Optional[ArticleDownloaderJob] = st.session_state.get('dl_job')
+    is_running = bool(dl_job and dl_job.is_running and not dl_job.stop_requested)
+
+    st.markdown("#### Pengunduh Artikel Ilmiah Berbasis DOI")
+    st.caption("Pindai DOI otomatis dari berkas dokumen atau teks bebas, lalu unduh artikel PDF secara hybrid via Open Access & Sci-Hub.")
+
+    col_in1, col_in2 = st.columns([1, 1], gap="medium")
+
+    with col_in1:
+        st.markdown("<label style='font-size: 0.95rem; font-weight: 600; color: #1E293B; margin-bottom: 6px; display: inline-block;'>Sumber Daftar DOI</label>", unsafe_allow_html=True)
+        input_mode = st.radio(
+            "Pilih Metode Input:",
+            options=["Unggah Dokumen", "Tempel Teks DOI"],
+            horizontal=True,
+            disabled=is_running,
+            label_visibility="collapsed"
+        )
+
+        extracted_dois: List[str] = []
+        target_subfolder = ""
+
+        if input_mode == "Unggah Dokumen":
+            uploaded = st.file_uploader(
+                "Unggah berkas yang memuat DOI:",
+                type=["xlsx", "xls", "docx", "pdf", "txt", "csv"],
+                disabled=is_running,
+                help="Mendukung Excel (.xlsx, .xls), Word (.docx), PDF (.pdf), serta berkas Teks (.txt, .csv)."
+            )
+            if uploaded:
+                base_name = os.path.splitext(uploaded.name)[0]
+                target_subfolder = base_name
+                extracted_dois = extract_dois_from_file(uploaded, uploaded.name)
+                st.session_state.dl_extracted_dois = extracted_dois
+                st.session_state.dl_subfolder_name = target_subfolder
+            else:
+                extracted_dois = st.session_state.get('dl_extracted_dois', [])
+                target_subfolder = st.session_state.get('dl_subfolder_name', '')
+
+        else:
+            pasted_text = st.text_area(
+                "Tempel teks atau daftar DOI:",
+                placeholder="Contoh:\n10.1016/j.compedu.2020.103980\nhttps://doi.org/10.30762/ijise.v2i3.1887\natau paragraf artikel...",
+                height=130,
+                disabled=is_running
+            )
+            custom_subfolder = st.text_input(
+                "Nama Subfolder Penyimpanan di 'artikel/':",
+                value=st.session_state.get('dl_subfolder_name') or f"unduhan_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                disabled=is_running,
+                help="Nama subfolder di dalam folder 'artikel/' tempat menyimpan berkas PDF."
+            )
+            if pasted_text:
+                extracted_dois = extract_dois_from_text(pasted_text)
+                target_subfolder = custom_subfolder.strip() or f"unduhan_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                st.session_state.dl_extracted_dois = extracted_dois
+                st.session_state.dl_subfolder_name = target_subfolder
+            else:
+                extracted_dois = st.session_state.get('dl_extracted_dois', [])
+                target_subfolder = custom_subfolder.strip()
+
+    with col_in2:
+        st.markdown("<label style='font-size: 0.95rem; font-weight: 600; color: #1E293B; margin-bottom: 6px; display: inline-block;'>Pratinjau & Pengaturan</label>", unsafe_allow_html=True)
+        with st.expander("Pengaturan Mirror & Jeda Unduhan", expanded=False):
+            sel_mirrors = st.multiselect(
+                "Mirror Sci-Hub Aktif:",
+                options=DEFAULT_SCIHUB_MIRRORS,
+                default=DEFAULT_SCIHUB_MIRRORS,
+                disabled=is_running,
+                help="Daftar domain mirror Sci-Hub yang akan dicoba berurutan jika artikel tidak tersedia di Open Access."
+            )
+            delay_val = st.number_input(
+                "Jeda Antar Unduhan (Detik):",
+                min_value=0.5,
+                max_value=10.0,
+                value=2.0,
+                step=0.5,
+                disabled=is_running,
+                help="Jeda waktu aman untuk menghindari tantangan bot dari server."
+            )
+
+        total_found = len(extracted_dois)
+        st.metric("Total DOI Terdeteksi", f"{total_found} Artikel")
+        if target_subfolder:
+            clean_sub = sanitize_filename(target_subfolder)
+            st.caption(f"Folder Output: `{ARTIKEL_DIR}/{clean_sub}/`")
+
+        if total_found > 0:
+            preview_df = pd.DataFrame({
+                'No': range(1, total_found + 1),
+                'DOI': [f"https://doi.org/{d}" for d in extracted_dois]
+            })
+            st.dataframe(preview_df, height=130, use_container_width=True, hide_index=True)
+        else:
+            st.info("Belum ada DOI terdeteksi. Unggah berkas atau tempel teks DOI di sebelah kiri.")
+
+    # Tombol Kontrol Mulai / Berhenti
+    st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+    if not is_running:
+        can_start = len(extracted_dois) > 0
+        if st.button("Mulai Unduh Artikel", type="primary", use_container_width=True, disabled=not can_start):
+            new_dl_job = ArticleDownloaderJob(
+                doi_list=extracted_dois,
+                subfolder_name=target_subfolder,
+                mirrors=sel_mirrors if sel_mirrors else DEFAULT_SCIHUB_MIRRORS,
+                delay_sec=delay_val
+            )
+            st.session_state.dl_job = new_dl_job
+            st.session_state.dl_was_running = True
+            new_dl_job.start()
+            st.rerun()
+    else:
+        if st.button("Hentikan Pengunduhan", type="secondary", use_container_width=True):
+            if dl_job:
+                dl_job.stop()
+                st.session_state.dl_was_running = False
+                st.rerun()
+
+    st.markdown("---")
+
+    # Monitor Real-Time Pengunduhan via Fragment
+    @st.fragment(run_every="1s" if is_running else None)
+    def render_dl_live_monitor() -> None:
+        current_job: Optional[ArticleDownloaderJob] = st.session_state.get('dl_job')
+        if not current_job:
+            st.info("Pilih berkas atau tempel daftar DOI di atas, lalu klik Mulai Unduh Artikel.")
+            return
+
+        if st.session_state.get('dl_was_running', False) and (not current_job.is_running or current_job.stop_requested):
+            st.session_state.dl_was_running = False
+            st.rerun(scope="app")
+
+        # Metrik Ringkas
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st_text = "Berhenti" if current_job.stop_requested else ("Berjalan" if current_job.is_running else "Selesai")
+            st.metric("Status", st_text)
+        with c2:
+            st.metric("Progres", f"{current_job.current_idx} / {current_job.total_items}")
+        with c3:
+            succ = sum(1 for r in current_job.results if r['Status'] == 'Berhasil')
+            st.metric("Berhasil Diunduh", succ)
+        with c4:
+            fail = sum(1 for r in current_job.results if r['Status'] != 'Berhasil')
+            st.metric("Tidak Ditemukan", fail)
+
+        # Progress Bar
+        pct = (current_job.current_idx / max(1, current_job.total_items)) if current_job.total_items > 0 else 0.0
+        pct = min(1.0, max(0.0, pct))
+        bar_label = f"{int(pct * 100)}% ({current_job.current_idx}/{current_job.total_items}) — {current_job.status}"
+        st.progress(pct, text=bar_label)
+
+        # Log Aktivitas Pengunduhan
+        with st.expander(f"Log Aktivitas Pengunduhan ({len(current_job.logs)})", expanded=bool(current_job.is_running and not current_job.stop_requested)):
+            log_str = "\n".join(current_job.logs[-80:]) if current_job.logs else "Belum ada aktivitas."
+            st.text_area("Console Unduhan", value=log_str, height=150, disabled=True, label_visibility="collapsed")
+            st.components.v1.html(
+                """
+                <script>
+                function scrollDlLog() {
+                    try {
+                        const doc = window.parent.document;
+                        const textareas = doc.querySelectorAll('textarea');
+                        textareas.forEach(t => {
+                            t.scrollTop = t.scrollHeight;
+                        });
+                    } catch (e) {}
+                }
+                scrollDlLog();
+                setTimeout(scrollDlLog, 50);
+                setTimeout(scrollDlLog, 150);
+                </script>
+                """,
+                height=0,
+                width=0
+            )
+
+        # Tabel Hasil & Aksi Berkas
+        if current_job.results:
+            st.markdown(f"#### Hasil Pengunduhan Artikel ({len(current_job.results)} Item)")
+            st.caption(f"Lokasi penyimpanan: `{current_job.output_dir}`")
+            res_df = pd.DataFrame(current_job.results)
+            display_cols = ['No', 'DOI', 'Judul Artikel', 'Sumber', 'Status', 'Ukuran', 'Nama File']
+            st.dataframe(res_df[display_cols], height=280, use_container_width=True, hide_index=True)
+
+            col_a1, col_a2 = st.columns(2)
+            with col_a1:
+                # Unduh ZIP seluruh file PDF yang berhasil
+                downloaded_files = [r['Path'] for r in current_job.results if r.get('Path') and os.path.exists(r['Path'])]
+                if downloaded_files:
+                    zip_buf = io.BytesIO()
+                    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                        for pdf_file in downloaded_files:
+                            zf.write(pdf_file, arcname=os.path.basename(pdf_file))
+                    zip_buf.seek(0)
+                    st.download_button(
+                        label=f"Unduh {len(downloaded_files)} Artikel PDF (.zip)",
+                        data=zip_buf,
+                        file_name=f"{current_job.clean_folder_name}.zip",
+                        mime="application/zip",
+                        type="primary",
+                        use_container_width=True,
+                        key="btn_download_zip_articles"
+                    )
+            with col_a2:
+                if st.button("Buka Folder Artikel", key="btn_open_article_dir", use_container_width=True):
+                    open_output_folder(current_job.output_dir)
+                    st.toast(f"Folder '{current_job.output_dir}' telah dibuka.")
+
+    render_dl_live_monitor()
+
+
 def render_footer() -> None:
     """Menampilkan footer copyright aplikasi dengan tautan repositori."""
     st.markdown("""
@@ -993,7 +1223,7 @@ def render_footer() -> None:
 
 
 # ==============================================================================
-# 4. TITIK MASUK UTAMA APLIKASI
+# 5. TITIK MASUK UTAMA APLIKASI
 # ==============================================================================
 
 def main() -> None:
@@ -1002,9 +1232,10 @@ def main() -> None:
     apply_custom_styles()
     render_header()
 
-    tab_scraper, tab_analytics = st.tabs([
+    tab_scraper, tab_analytics, tab_downloader = st.tabs([
         "Publikasi",
-        "Analisis"
+        "Analisis",
+        "Unduh Artikel"
     ])
 
     with tab_scraper:
@@ -1012,6 +1243,9 @@ def main() -> None:
 
     with tab_analytics:
         render_analytics_tab()
+
+    with tab_downloader:
+        render_downloader_tab()
 
     render_footer()
 
