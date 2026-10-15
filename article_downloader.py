@@ -330,61 +330,97 @@ class ArticleDownloaderJob:
         if not self.driver:
             return False
         try:
-            title = (self.driver.title or "").lower()
+            # 1. Jika URL langsung merujuk ke PDF atau berkas storage, bukan CAPTCHA
+            cur_url = (self.driver.current_url or "").lower()
+            if cur_url.endswith('.pdf') or '/storage/' in cur_url:
+                return False
+
             src = (self.driver.page_source or "").lower()
-            url = (self.driver.current_url or "").lower()
-            return (
-                'robot' in title or
-                'are you are robot' in src or
-                'altcha' in src or
-                'altcha-widget' in src or
-                ('captcha' in src and 'sci-hub' in url)
+            title = (self.driver.title or "").strip().lower()
+
+            # 2. Jika elemen object/embed PDF sudah termuat di DOM, bukan CAPTCHA
+            if '<object' in src and ('.pdf' in src or '/storage/' in src):
+                return False
+            if '<embed' in src and ('.pdf' in src or '/storage/' in src):
+                return False
+
+            # 3. Indikator akurat halaman tantangan robot Sci-Hub
+            is_robot = (
+                'are you are robot' in title or
+                'are you a robot' in title or
+                title.startswith('sci-hub: are you') or
+                ('are you a robot' in src and ('class="ask"' in src or 'translate="en:isrobot"' in src)) or
+                ('altcha-widget' in src and 'challengeurl=' in src) or
+                ('class="answer"' in src and 'check()' in src)
             )
+            return is_robot
         except Exception:
             return False
 
     def wait_for_captcha_if_needed(self):
-        """Mendeteksi dan menunggu verifikasi CAPTCHA di Chrome diselesaikan."""
+        """Mendeteksi dan menyelesaikan verifikasi robot di Chrome secara otomatis atau interaktif."""
         if not self.driver:
             return
 
         if self._is_captcha_active():
-            self.is_captcha = True
-            self.add_log("⚠️ Verifikasi robot (CAPTCHA) terdeteksi di Sci-Hub! Menunggu verifikasi di jendela Chrome...")
-            self.status = "Menunggu verifikasi robot di Chrome..."
-
-            # Coba auto-trigger checkbox Altcha via JS
+            # Langkah 1: Coba selesaikan otomatis via trigger JS check() / altcha.verify()
             try:
                 self.driver.execute_script("""
-                    const cb = document.querySelector('input[type="checkbox"]');
-                    if (cb && !cb.checked) {
-                        cb.click();
-                    }
+                    try {
+                        if (typeof check === 'function') {
+                            check();
+                        } else {
+                            const ans = document.querySelector('.answer');
+                            if (ans) ans.click();
+                            const w = document.querySelector('altcha-widget');
+                            if (w && typeof w.verify === 'function') w.verify();
+                        }
+                    } catch(e) {}
                 """)
             except Exception:
                 pass
 
-            start_wait = time.time()
-            while self._is_captcha_active():
-                if self.stop_requested:
+            # Beri jeda 4 detik untuk melihat apakah tantangan langsung terselesaikan secara otomatis
+            for _ in range(4):
+                if self.stop_requested or not self._is_captcha_active():
                     break
                 time.sleep(1.0)
-                try:
-                    self.driver.execute_script("""
-                        const cb = document.querySelector('input[type="checkbox"]');
-                        if (cb && !cb.checked) {
-                            cb.click();
-                        }
-                    """)
-                except Exception:
-                    pass
-                if time.time() - start_wait > 180:
-                    self.add_log("Batas waktu verifikasi CAPTCHA tercapai (3 menit).")
-                    break
 
-            self.is_captcha = False
-            if not self._is_captcha_active():
-                self.add_log("Verifikasi CAPTCHA selesai! Melanjutkan unduhan...")
+            # Jika setelah 4 detik masih berupa tantangan robot, baru aktifkan peringatan CAPTCHA di antarmuka
+            if self._is_captcha_active() and not self.stop_requested:
+                self.is_captcha = True
+                self.add_log("⚠️ Verifikasi 'Are you a robot?' terdeteksi di Sci-Hub. Jika belum selesai otomatis, silakan klik tombol 'No' pada jendela Chrome...")
+                self.status = "Menunggu verifikasi robot di Chrome..."
+
+                start_wait = time.time()
+                while self._is_captcha_active():
+                    if self.stop_requested:
+                        break
+                    # Ulangi klik/trigger bila belum tereksekusi
+                    try:
+                        self.driver.execute_script("""
+                            try {
+                                if (typeof check === 'function') {
+                                    check();
+                                } else {
+                                    const ans = document.querySelector('.answer');
+                                    if (ans) ans.click();
+                                }
+                            } catch(e) {}
+                        """)
+                    except Exception:
+                        pass
+                    time.sleep(1.5)
+                    if time.time() - start_wait > 90:
+                        self.add_log("Batas waktu verifikasi CAPTCHA tercapai (90 detik).")
+                        break
+
+                self.is_captcha = False
+                if not self._is_captcha_active():
+                    self.add_log("Verifikasi robot berhasil diselesaikan! Melanjutkan unduhan...")
+                    time.sleep(1.0)
+            elif not self._is_captcha_active():
+                self.add_log("Verifikasi robot diselesaikan secara otomatis!")
                 time.sleep(1.0)
 
     def _extract_pdf_url_from_driver(self, base_mirror: str) -> Optional[str]:
